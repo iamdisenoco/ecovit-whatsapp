@@ -63,9 +63,10 @@ const SECURITY_HEADERS = [
   },
 ] as const;
 
+// ECOVIT: español fijo por defecto (wacrm caía a inglés).
 const APP_LOCALE = ["en", "pt", "es", "ko"].includes(process.env.NEXT_PUBLIC_APP_LOCALE ?? "")
   ? (process.env.NEXT_PUBLIC_APP_LOCALE as string)
-  : "en";
+  : "es";
 
 const nextConfig: NextConfig = {
   turbopack: {

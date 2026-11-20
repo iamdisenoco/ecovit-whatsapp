@@ -16,6 +16,9 @@ export default defineConfig({
       ENCRYPTION_KEY:
         "0000000000000000000000000000000000000000000000000000000000000000",
       META_APP_SECRET: "test-meta-app-secret",
+      // Las pruebas de wacrm leen el catálogo inglés (alias de arriba); la
+      // app, sin la variable, arranca en español.
+      NEXT_PUBLIC_APP_LOCALE: "en",
     },
     clearMocks: true,
   },

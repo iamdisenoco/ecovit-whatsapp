@@ -8,15 +8,15 @@ import activeMessages from '@app-messages';
  *
  * The locale is fixed at build time (NEXT_PUBLIC_APP_LOCALE, see
  * src/i18n/request.ts), so this resolves one catalogue per process.
- * Unknown or unset locales fall back to English, which is also what the
- * test suite sees.
+ * ECOVIT: sin la variable va español. Las pruebas fijan `en` en
+ * vitest.config.ts, junto con el alias del catálogo inglés.
  */
 
 type Catalogue = Record<string, unknown>;
 
 function loadCatalogue(): { locale: string; messages: Catalogue } {
   const env = process.env.NEXT_PUBLIC_APP_LOCALE ?? '';
-  const locale = ['en', 'pt', 'es', 'ko'].includes(env) ? env : 'en';
+  const locale = ['en', 'pt', 'es', 'ko'].includes(env) ? env : 'es';
   return { locale, messages: activeMessages as Catalogue };
 }
 
