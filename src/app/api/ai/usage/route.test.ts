@@ -187,6 +187,17 @@ describe('GET /api/ai/usage', () => {
     expect(h.ranges.length).toBeGreaterThan(2)
   })
 
+  it('ECOVIT: el gasto suma TODA la ventana aunque los tokens se corten en 10.000 filas', async () => {
+    h.rows = Array.from({ length: 10_050 }, () =>
+      row('2026-05-18T10:00:00Z', 1, { conversation_id: 'c1', costo_usd: 0.001 }),
+    )
+    const res = await get('days=1')
+    expect(res.body.truncated).toBe(true)
+    const g = (res.body as unknown as { gasto: { total_usd: number; gasto_mes_usd: number } }).gasto
+    expect(g.total_usd).toBe(10.05)
+    expect(g.gasto_mes_usd).toBe(10.05)
+  })
+
   it('flags truncation once the row cap is exceeded', async () => {
     h.rows = Array.from({ length: 10_050 }, () => row('2026-05-18T10:00:00Z', 1))
     const res = await get('days=1')

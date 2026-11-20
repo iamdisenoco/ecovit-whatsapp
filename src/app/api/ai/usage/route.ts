@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { resolveTimeZone, zonedDayKey, zonedDayStart, zonedLastNDayKeys } from '@/lib/ai/usage-days'
-import { fetchPagesUpTo } from '@/lib/supabase/paged-query'
+import { fetchAllPages, fetchPagesUpTo } from '@/lib/supabase/paged-query'
 import { getT } from '@/lib/i18n/translate'
 import { mesBogota, resumirGasto, sumarUsd } from '@/lib/ai/gasto'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
@@ -130,8 +130,25 @@ export async function GET(request: Request) {
 
     const byModel = [...modelMap.values()].sort((a, b) => b.tokens - a.tokens)
 
-    // ECOVIT · RF-M03.11: el gasto en USD, de las MISMAS filas.
-    const gasto = resumirGasto(rows, (iso) => zonedDayKey(iso, timeZone))
+    // ECOVIT · RF-M03.11: el gasto en USD de TODA la ventana, sin el corte de
+    // 10.000 filas de los tokens (plata no se muestra a medias): solo tres
+    // columnas, paginando hasta el final. Si falla, la tarjeta sigue sin él.
+    let filasGasto: { created_at: string; conversation_id: string | null; costo_usd: number | string | null }[] | null = null
+    try {
+      filasGasto = await fetchAllPages((from, to) =>
+        supabase
+          .from('ai_usage_log')
+          .select('created_at, conversation_id, costo_usd')
+          .eq('account_id', accountId)
+          .gte('created_at', since.toISOString())
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
+          .range(from, to),
+      )
+    } catch (error) {
+      console.error('[ai/usage GET] gasto de la ventana:', error)
+    }
+    const gasto = resumirGasto(filasGasto ?? [], (iso) => zonedDayKey(iso, timeZone))
     // El tope mensual del bot (0114). Lectura de la dirección (ya comprobada).
     const { data: tope } = await supabaseAdmin()
       .from('parametros')
@@ -143,7 +160,7 @@ export async function GET(request: Request) {
     const mes = mesBogota(new Date())
     let gastoMes: number | null = null
     try {
-      const filasMes = await fetchPagesUpTo<{ costo_usd: number | string | null }>(
+      const filasMes = await fetchAllPages<{ costo_usd: number | string | null }>(
         (from, to) =>
           supabase
             .from('ai_usage_log')
@@ -154,7 +171,6 @@ export async function GET(request: Request) {
             .order('created_at', { ascending: false })
             .order('id', { ascending: false })
             .range(from, to),
-        MAX_ROWS,
       )
       gastoMes = sumarUsd(filasMes)
     } catch (error) {
@@ -180,7 +196,8 @@ export async function GET(request: Request) {
       by_model: byModel,
       daily: [...daily.values()].map((d) => ({ ...d, usd: gasto.por_dia[d.date] ?? 0 })),
       gasto: {
-        total_usd: gasto.total_usd,
+        // null: no se pudo leer (no es cero).
+        total_usd: filasGasto ? gasto.total_usd : null,
         sin_costo: gasto.sin_costo,
         por_chat: gasto.por_chat,
         tope_usd_mes: Number.isFinite(topeUsd) ? topeUsd : null,

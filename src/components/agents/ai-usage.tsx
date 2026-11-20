@@ -47,7 +47,7 @@ interface UsageResponse {
   daily: { date: string; tokens: number; calls: number; usd?: number }[];
   /** ECOVIT · RF-M03.11: el gasto en USD de las mismas filas. */
   gasto?: {
-    total_usd: number;
+    total_usd: number | null;
     sin_costo: number;
     por_chat: { conversation_id: string; usd: number; llamadas: number }[];
     tope_usd_mes: number | null;
@@ -287,7 +287,10 @@ function GastoClaude({
                 }`
           }
         />
-        <Stat label={`En los últimos ${dias} días`} value={usd(gasto.total_usd)} />
+        <Stat
+          label={`En los últimos ${dias} días`}
+          value={gasto.total_usd === null ? 'Sin dato' : usd(gasto.total_usd)}
+        />
       </div>
       {gasto.sin_costo > 0 && (
         <p className="text-xs text-muted-foreground">
