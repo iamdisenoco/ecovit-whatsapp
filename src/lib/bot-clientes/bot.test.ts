@@ -304,6 +304,20 @@ describe('revisor: ninguna cifra de plata en el texto del modelo', () => {
     'Precio: $90',
     'Son 12 dólares',
     'Más o menos 2 mill',
+    // Segunda revisión: en palabras, porcentajes, descuentos y números chicos con precio.
+    'Sale en ciento cincuenta mil',
+    'Son doscientos mil',
+    'Vale novecientos',
+    'Unos cien',
+    'Tres millones',
+    'Tiene un 10% de descuento',
+    'Descuento del quince por ciento',
+    'Te puedo dar un descuento',
+    'Cuesta 950',
+    '850 cada uno',
+    'Son 90 c/u',
+    'Queda a 300 la unidad',
+    'El precio es de 420',
   ];
   const deja = [
     'Tenemos 3 disponibles.',
@@ -311,6 +325,9 @@ describe('revisor: ninguna cifra de plata en el texto del modelo', () => {
     'La referencia FX-1234 está disponible.',
     'El fluxómetro de 1/2 pulgada viene en caja de 12.',
     'Viene con 3 m de manguera y tubo de 25 mm.',
+    'Tenemos 2 modelos: el de orinal y el de sanitario.',
+    'Hay 12 en existencia y viene en caja de 6.',
+    '¿Cuántas unidades necesitas? Con eso te paso con tu asesor.',
   ];
   for (const t of frena) {
     it(`frena: «${t}»`, () => expect(revisarRespuesta(t, new Map()).ok).toBe(false));
