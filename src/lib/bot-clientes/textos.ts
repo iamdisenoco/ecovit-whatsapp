@@ -37,7 +37,7 @@ export const TEXTOS: Record<TextoFijo['id'], TextoFijo> = {
     id: 'T5',
     nombre: 'No negocia',
     plantilla:
-      'Eso lo revisa tu asesor.',
+      'Eso lo revisa {asesor}. Ya tiene tu solicitud y te escribe.',
     aprobado: true,
   },
   T6: {
@@ -97,7 +97,7 @@ export function t4FaltaDato(asesor: string): string {
   return rellenar(TEXTOS.T4.plantilla, { asesor });
 }
 
-export const t5NoNegocia = (): string => TEXTOS.T5.plantilla;
+export const t5NoNegocia = (asesor: string): string => rellenar(TEXTOS.T5.plantilla, { asesor });
 export const t6IaNoResponde = (): string => TEXTOS.T6.plantilla;
 
 /** Pesos colombianos: «$ 148.000», o con centavos si los hay. */

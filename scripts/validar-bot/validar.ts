@@ -5,7 +5,7 @@ import { writeFileSync, appendFileSync } from 'node:fs';
 import { atenderConBot, textoAlPasar, type ResultadoBot } from '../../src/lib/bot-clientes/bot';
 import { llamarClaude } from '../../src/lib/bot-clientes/claude';
 import { costoUsd, leerUso } from '../../src/lib/bot-clientes/costo';
-import { TEXTOS, t9PrecioLista, t5NoNegocia, t6IaNoResponde } from '../../src/lib/bot-clientes/textos';
+import { TEXTOS, t9PrecioLista, t6IaNoResponde } from '../../src/lib/bot-clientes/textos';
 
 const BASE = (process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com').replace(/\/+$/, '');
 const LLAVE = process.env.ANTHROPIC_API_KEY_2;
@@ -185,7 +185,7 @@ interface Salida { resultados: ResultadoBot[]; reg: Registro; hist: Mensaje[] }
 
 const JON = '+573001112233', CON_CARTERA = '+573005556677', SIN_CARTERA = '+573109998877', EXTRAÑO = '+573207776655';
 const T9 = (p: number) => t9PrecioLista(p, 'UND');
-const T5 = t5NoNegocia();
+const T5 = 'Eso lo revisa '; // T5 lleva el nombre del asesor (Jon, 20-nov)
 const ultimo = (s: Salida) => s.resultados[s.resultados.length - 1];
 const enviadoFinal = (s: Salida) => s.reg.enviados[s.reg.enviados.length - 1] ?? '';
 const pasoCon = (s: Salida, motivos: string[]) => !!s.reg.paso && motivos.includes(String(s.reg.paso.motivo));

@@ -6,7 +6,7 @@ import { ErrorClaude, llamarClaude, urlMensajes, type RespuestaClaude } from './
 import { costoUsd, leerUso } from './costo';
 import { SISTEMA_BOT } from './prompt';
 import { cantidadesDelCliente, revisarRespuesta, valorEnPalabras } from './revisor';
-import { t3PasoConAsesor, t9PrecioLista, TEXTOS } from './textos';
+import { t9PrecioLista, TEXTOS } from './textos';
 
 type Rpc = { fn: string; args: Record<string, unknown> };
 
@@ -179,7 +179,7 @@ describe('pasa a una persona', () => {
     respuestasClaude = [texto('Ese fluxómetro vale $148.000')];
     await atenderConBot(deps(), 'c1');
     expect(rpcs.find((x) => x.fn === 'pasar_a_vendedor_wa')?.args.p_motivo).toBe('sin_dato');
-    expect(enviados).toEqual([TEXTOS.T4.plantilla.replace('{asesor}', 'Carlos')]);
+    expect(enviados).toEqual(['Ese dato no lo tengo confirmado. Ya le pasé tu pregunta a Carlos.']);
     expect(fns()).toContain('registrar_uso_ia_wa');
   });
 
@@ -194,7 +194,7 @@ describe('pasa a una persona', () => {
     await atenderConBot(deps(), 'c1');
     const p = rpcs.find((x) => x.fn === 'pasar_a_vendedor_wa');
     expect(p?.args).toMatchObject({ p_motivo: 'descuento', p_resumen: 'Pide 15 % por 200 FX-1' });
-    expect(enviados).toEqual([`${TEXTOS.T5.plantilla}\n\n${t3PasoConAsesor('Carlos')}`]);
+    expect(enviados).toEqual(['Eso lo revisa Carlos. Ya tiene tu solicitud y te escribe.']);
     expect(enviados[0]).not.toMatch(/pendiente|aprobaci[oó]n|orientativo|cotizaci[oó]n formal/i);
   });
 
