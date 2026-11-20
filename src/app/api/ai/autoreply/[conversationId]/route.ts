@@ -26,6 +26,12 @@ type Params = { params: Promise<{ conversationId: string }> }
  *
  * Writes go through the RLS-scoped SSR client, so a conversation outside
  * the caller's account simply isn't found (404).
+ *
+ * ECOVIT (mínimo 4): la columna del asignado no se escribe con `update`.
+ * «Tomar el control» toma el chat con `tomar_conversacion` y la marca de la
+ * misma lectura; si ya tiene dueño, no se toca. «Retomar IA» ya no suelta el
+ * chat: no hay función para soltar (TODO bloque 4/6), así que el bot sigue
+ * callado mientras una persona lo tenga.
  */
 export async function POST(request: Request, { params }: Params) {
   try {
@@ -50,7 +56,7 @@ export async function POST(request: Request, { params }: Params) {
     // Confirm the conversation is in the caller's account before writing.
     const { data: conv, error: convErr } = await supabase
       .from('conversations')
-      .select('id')
+      .select('id, assigned_agent_id, actualizado_en')
       .eq('id', conversationId)
       .eq('account_id', accountId)
       .maybeSingle()
@@ -65,23 +71,28 @@ export async function POST(request: Request, { params }: Params) {
       return NextResponse.json({ error: t('common.conversationNotFound') }, { status: 404 })
     }
 
-    const update: Record<string, unknown> = { ai_autoreply_disabled: paused }
+    let assignedAgentId: string | null = conv.assigned_agent_id ?? null
+    let actualizadoEn: string | undefined = conv.actualizado_en ?? undefined
 
-    if (paused) {
-      if (assignToMe) update.assigned_agent_id = userId
-    } else {
-      // Resuming hands the thread *back to the bot*. Clear the pause and
-      // the handoff note, and — crucially — release ANY assignment, not
-      // just the caller's own: the auto-reply eligibility gate stands
-      // down whenever a human is assigned, so leaving a stale assignee
-      // (e.g. the agent a prior handoff routed to) would silently keep
-      // the bot muted and make "Resume AI" a no-op. This is the explicit
-      // choice to let the bot own the thread again.
-      update.assigned_agent_id = null
+    // Tomar primero: si la función lo rechaza (otro lo tomó en el medio),
+    // no se pausa nada y se devuelve su mensaje.
+    if (paused && assignToMe && !assignedAgentId) {
+      const { data: marca, error: tomarErr } = await supabase.rpc('tomar_conversacion', {
+        p_conversacion: conversationId,
+        p_visto: conv.actualizado_en,
+      })
+      if (tomarErr) {
+        return NextResponse.json({ error: tomarErr.message }, { status: 409 })
+      }
+      assignedAgentId = userId
+      actualizadoEn = (marca as string | null) ?? actualizadoEn
+    }
+
+    const update: Record<string, unknown> = { ai_autoreply_disabled: paused }
+    if (!paused) {
       // Give the bot a fresh reply budget on this thread. This is a
       // deliberate, manual, rate-limited action (not automatable), so it
-      // can't be used to bypass the per-conversation cap at scale — it's
-      // a human choosing to re-engage the assistant.
+      // can't be used to bypass the per-conversation cap at scale.
       update.ai_reply_count = 0
       update.ai_handoff_summary = null
     }
@@ -99,7 +110,12 @@ export async function POST(request: Request, { params }: Params) {
       )
     }
 
-    return NextResponse.json({ success: true, paused })
+    return NextResponse.json({
+      success: true,
+      paused,
+      assigned_agent_id: assignedAgentId,
+      actualizado_en: actualizadoEn,
+    })
   } catch (err) {
     return toErrorResponse(err)
   }

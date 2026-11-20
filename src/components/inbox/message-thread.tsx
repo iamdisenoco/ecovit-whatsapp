@@ -35,7 +35,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -61,7 +60,6 @@ import {
   templateNamesInMessages,
 } from "@/lib/whatsapp/template-message-view";
 import { contactHandle } from "@/lib/whatsapp/wa-identity";
-import { resolveAssignmentResult } from "@/lib/inbox/assignment";
 import {
   businessReactionOn,
   withBusinessReaction,
@@ -94,6 +92,8 @@ interface MessageThreadProps {
   onAssignChange: (
     conversationId: string,
     assignedAgentId: string | null,
+    /** La marca nueva que devolvió la función, para la próxima asignación. */
+    actualizadoEn?: string,
   ) => void;
   /**
    * On mobile, the thread is shown full-screen with the conversation list
@@ -192,7 +192,9 @@ export function MessageThread({
   const tTimer = useTranslations("Inbox.sessionTimer");
   const tQuote = useTranslations("Inbox.replyQuote");
 
-  const { user } = useAuth();
+  const { user, isAdmin, isOwner } = useAuth();
+  // Asignar a otro es de la dirección; el vendedor solo puede tomar un chat sin dueño.
+  const canAssignOthers = isAdmin || isOwner;
   const { getPresence, getRow, now } = usePresence();
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -939,36 +941,48 @@ export function MessageThread({
     [conversation, user?.id, t],
   );
 
+  // ECOVIT (mínimo 4): «Tomar» y «Asignar a…» van por función, nunca con un
+  // `update` directo — la base no deja escribir `assigned_agent_id` desde el
+  // navegador. `p_visto` es la marca de la MISMA lectura que trajo el
+  // asignado: si alguien cambió el chat en el medio, la función lo rechaza y
+  // dice quién lo tiene, y eso es lo que se muestra.
   const handleAssignChange = useCallback(
-    async (agentId: string | null) => {
+    async (target: Profile) => {
       if (!conversation) return;
-
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from("conversations")
-        .update({ assigned_agent_id: agentId })
-        .eq("id", conversation.id)
-        .select("assigned_agent_id")
-        .single();
-
-      if (error) {
-        console.error("Failed to update assignment:", error);
-        toast.error(t("assignmentUpdateFailed"));
+      const visto = conversation.actualizado_en;
+      if (!visto) {
+        toast.error("Falta la marca de la conversación. Recarga la página.");
         return;
       }
 
-      const { assignedAgentId, rejected } = resolveAssignmentResult(
-        agentId,
-        data?.assigned_agent_id,
-      );
-      if (rejected) {
-        toast.error(t("assigneeNoLongerMember"));
+      const supabase = createClient();
+      const tomar = !canAssignOthers;
+      if (!tomar && !target.perfil_id) {
+        toast.error("Esa persona no tiene perfil de ECOVIT activo.");
         setProfilesVersion((v) => v + 1);
+        return;
+      }
+      const { data, error } = tomar
+        ? await supabase.rpc("tomar_conversacion", {
+            p_conversacion: conversation.id,
+            p_visto: visto,
+          })
+        : await supabase.rpc("asignar_conversacion", {
+            p_conversacion: conversation.id,
+            p_agente: target.perfil_id,
+            p_visto: visto,
+          });
+
+      if (error) {
+        console.error("Failed to update assignment:", error);
+        toast.error(error.message || t("assignmentUpdateFailed"));
+        setProfilesVersion((v) => v + 1);
+        return;
       }
 
-      onAssignChange(conversation.id, assignedAgentId);
+      onAssignChange(conversation.id, target.user_id, (data as string | null) ?? undefined);
     },
-    [conversation, onAssignChange, t],
+    [conversation, canAssignOthers, onAssignChange, t],
   );
 
   // Empty state — same WhatsApp-style doodle background as the active
@@ -997,6 +1011,8 @@ export function MessageThread({
   );
   const assignedAgentId = conversation.assigned_agent_id ?? null;
   const currentAssignee = profiles.find((p) => p.user_id === assignedAgentId);
+  // Solo quien tiene perfil de ECOVIT activo puede recibir un chat.
+  const assignableProfiles = profiles.filter((p) => p.perfil_id);
   const assignLabel = assignedAgentId
     ? (currentAssignee?.full_name ?? t("assigned"))
     : t("assign");
@@ -1141,18 +1157,40 @@ export function MessageThread({
               align="end"
               className="border-border bg-popover"
             >
-              {profiles.length === 0 ? (
+              {!canAssignOthers ? (
+                // Vendedor: solo «Tomar» un chat sin dueño (tomar_conversacion).
+                assignedAgentId ? (
+                  <DropdownMenuItem disabled className="text-sm text-muted-foreground">
+                    {assignedAgentId === user?.id
+                      ? "Esta conversación es tuya"
+                      : `La tiene ${currentAssignee?.full_name ?? "otra persona"}`}
+                  </DropdownMenuItem>
+                ) : (
+                  <DropdownMenuItem
+                    onClick={() => {
+                      const yo = profiles.find((p) => p.user_id === user?.id);
+                      if (yo) handleAssignChange(yo);
+                      else toast.error("No encontramos tu perfil. Recarga la página.");
+                    }}
+                    className="text-sm text-popover-foreground"
+                  >
+                    Tomar conversación
+                  </DropdownMenuItem>
+                )
+              ) : assignableProfiles.length === 0 ? (
                 <DropdownMenuItem disabled className="text-sm text-muted-foreground">
                   {t("noTeammates")}
                 </DropdownMenuItem>
               ) : (
-                profiles.map((p) => {
+                assignableProfiles.map((p) => {
                   const isSelected = p.user_id === assignedAgentId;
                   const presence = getPresence(p.user_id);
                   return (
                     <DropdownMenuItem
                       key={p.id}
-                      onClick={() => handleAssignChange(p.user_id)}
+                      onClick={() => {
+                        if (!isSelected) handleAssignChange(p);
+                      }}
                       className={cn(
                         "text-sm",
                         isSelected ? "text-primary" : "text-popover-foreground"
@@ -1176,17 +1214,8 @@ export function MessageThread({
                   );
                 })
               )}
-              {assignedAgentId && (
-                <>
-                  <DropdownMenuSeparator className="bg-border" />
-                  <DropdownMenuItem
-                    onClick={() => handleAssignChange(null)}
-                    className="text-sm text-muted-foreground"
-                  >
-                    {t("unassign")}
-                  </DropdownMenuItem>
-                </>
-              )}
+              {/* Sin «Quitar asignación»: la base no tiene función para soltar un
+                  chat. TODO bloque 4: soltar por función, con condición de versión. */}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -1291,7 +1320,7 @@ export function MessageThread({
         currentUserId={user?.id}
         onChange={(patch) => {
           if ("assigned_agent_id" in patch) {
-            onAssignChange(conversation.id, patch.assigned_agent_id ?? null);
+            onAssignChange(conversation.id, patch.assigned_agent_id ?? null, patch.actualizado_en);
           }
         }}
       />

@@ -561,20 +561,18 @@ function InboxPageInner() {
   );
 
   const handleAssignChange = useCallback(
-    (conversationId: string, assignedAgentId: string | null) => {
+    (conversationId: string, assignedAgentId: string | null, actualizadoEn?: string) => {
+      // ECOVIT: el asignado y su marca viajan juntos (los devuelve la misma
+      // función); sin marca nueva se conserva la que había.
+      const patch = {
+        assigned_agent_id: assignedAgentId ?? undefined,
+        ...(actualizadoEn ? { actualizado_en: actualizadoEn } : {}),
+      };
       setConversations((prev) =>
-        prev.map((c) =>
-          c.id === conversationId
-            ? { ...c, assigned_agent_id: assignedAgentId ?? undefined }
-            : c
-        )
+        prev.map((c) => (c.id === conversationId ? { ...c, ...patch } : c))
       );
       if (activeConversation?.id === conversationId) {
-        setActiveConversation((prev) =>
-          prev
-            ? { ...prev, assigned_agent_id: assignedAgentId ?? undefined }
-            : prev
-        );
+        setActiveConversation((prev) => (prev ? { ...prev, ...patch } : prev));
       }
     },
     [activeConversation]

@@ -17,7 +17,7 @@ interface AiThreadBannerProps {
   /** Current assignee; when a human owns the thread the bot won't run,
    *  so the "AI active" banner is suppressed. */
   assignedAgentId?: string | null;
-  /** The acting agent — "Take over" assigns the thread to them. */
+  /** The acting agent. ECOVIT: ya no se usa (tomar va por la función en el servidor). */
   currentUserId?: string | null;
   /** Called after a successful toggle so the parent can patch its local
    *  conversation state (the realtime UPDATE also arrives, but this keeps
@@ -25,6 +25,7 @@ interface AiThreadBannerProps {
   onChange?: (patch: {
     ai_autoreply_disabled: boolean;
     assigned_agent_id?: string | null;
+    actualizado_en?: string;
   }) => void;
 }
 
@@ -41,7 +42,6 @@ export function AiThreadBanner({
   disabled,
   handoffSummary,
   assignedAgentId,
-  currentUserId,
   onChange,
 }: AiThreadBannerProps) {
   const t = useTranslations("Inbox.aiBanner");
@@ -78,17 +78,18 @@ export function AiThreadBanner({
           toast.error(j?.error ?? t("updateError"));
           return;
         }
+        const j = (await res.json().catch(() => ({}))) as {
+          assigned_agent_id?: string | null;
+          actualizado_en?: string;
+        };
         setPaused(paused);
+        // ECOVIT: lo que dice el servidor, no lo que suponemos — tomar va
+        // por función y «Retomar IA» ya no suelta el chat.
         onChange?.({
           ai_autoreply_disabled: paused,
-          // Take over assigns to the acting agent; resume releases only
-          // the caller's own assignment. The realtime UPDATE reconciles
-          // the exact value either way.
-          ...(paused
-            ? currentUserId
-              ? { assigned_agent_id: currentUserId }
-              : {}
-            : { assigned_agent_id: null }),
+          ...("assigned_agent_id" in j
+            ? { assigned_agent_id: j.assigned_agent_id ?? null, actualizado_en: j.actualizado_en }
+            : {}),
         });
         toast.success(paused ? t("tookOver") : t("resumed"));
       } catch {
@@ -97,7 +98,7 @@ export function AiThreadBanner({
         setBusy(false);
       }
     },
-    [conversationId, currentUserId, onChange, t],
+    [conversationId, onChange, t],
   );
 
   // Account has no auto-reply → nothing to show. (Still loading → nothing.)

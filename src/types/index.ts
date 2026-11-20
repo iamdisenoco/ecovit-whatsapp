@@ -13,6 +13,12 @@ export type {
 export interface Profile {
   id: string;
   user_id: string;
+  /**
+   * ECOVIT: el `perfiles.id` del que sale esta fila (la base mantiene
+   * `profiles` como espejo de `perfiles`). `asignar_conversacion` recibe
+   * este id, no el `user_id`.
+   */
+  perfil_id?: string | null;
   full_name: string;
   email: string;
   avatar_url?: string;
@@ -174,6 +180,13 @@ export interface Conversation {
   contact_id: string;
   status: ConversationStatus;
   assigned_agent_id?: string;
+  /**
+   * ECOVIT: la marca de versión de la ASIGNACIÓN (se mueve solo cuando
+   * cambia quién tiene el chat). Va como `p_visto` a `tomar_conversacion` y
+   * `asignar_conversacion`, y tiene que salir de la MISMA lectura que
+   * `assigned_agent_id`.
+   */
+  actualizado_en?: string;
   last_message_text?: string;
   last_message_at?: string;
   unread_count: number;
