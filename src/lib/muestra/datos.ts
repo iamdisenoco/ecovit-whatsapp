@@ -379,6 +379,12 @@ export function crearBase(ahora = Date.now()): Record<string, Fila[]> {
   }
 }
 
+/** Nombre del cliente de un chat, o su teléfono (como la ruta real). */
+function nombreDeChat(id: string): string | null {
+  const c = CHATS.find((x) => x.id === id)
+  return c ? (c.contacto.nombre ?? c.contacto.telefono) : null
+}
+
 /** Lo que devuelve `GET /api/ai/usage` para una ventana de `dias`. */
 export function usoIa(dias: number, ahora = Date.now()) {
   // Serie fija y creíble: más uso entre semana, nada los domingos.
@@ -424,16 +430,15 @@ export function usoIa(dias: number, ahora = Date.now()) {
       auto_reply: { calls: autoCalls, tokens: autoTokens },
       draft: { calls: calls - autoCalls, tokens: tokens - autoTokens },
     },
-    by_model: [
-      { model: 'claude-sonnet-5-5', provider: 'anthropic', calls: autoCalls, tokens: autoTokens },
-      { model: 'claude-haiku-4-5', provider: 'anthropic', calls: calls - autoCalls, tokens: tokens - autoTokens },
-    ],
+    // Un solo modelo: el del bot.
+    by_model: [{ model: 'claude-sonnet-5-5', provider: 'anthropic', calls, tokens }],
     daily,
     gasto: {
       total_usd: usd,
       sin_costo: 0,
       por_chat: porChat.map(([conversation_id, factor, llamadas]) => ({
         conversation_id,
+        cliente: nombreDeChat(conversation_id),
         usd: Math.round(usd * factor * 10_000) / 10_000,
         llamadas: Math.max(1, Math.round((llamadas * dias) / 30)),
       })),
