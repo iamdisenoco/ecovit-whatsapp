@@ -11,7 +11,13 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
 const RAIZ = join(__dirname, '..', '..')
-const WEBHOOK = 'app/api/whatsapp/webhook/route.ts'
+// Bloque 5: el webhook se partió en dos. El de todos los proveedores escribe por su
+// almacén (`lib/whatsapp/webhook/almacen-supabase.ts`); el de Meta que traía wacrm
+// quedó entero en `app/api/whatsapp/meta/webhook`. Los dos crean contactos.
+const WEBHOOKS = [
+  'lib/whatsapp/webhook/almacen-supabase.ts',
+  'app/api/whatsapp/meta/webhook/route.ts',
+]
 
 /**
  * Las llaves calculadas revisadas a mano. Cada una lleva la razón y una
@@ -86,17 +92,19 @@ export function problema(e: Escritura): string | null {
 describe('nadie fuera del webhook crea contactos ni escribe contacts.phone', () => {
   const fuentes = archivos(RAIZ).map((p) => ({ ruta: relative(RAIZ, p), texto: readFileSync(p, 'utf8') }))
 
-  it('lee de verdad el código: encuentra las escrituras del webhook', () => {
-    const webhook = fuentes.find((f) => f.ruta === WEBHOOK)
-    expect(webhook).toBeDefined()
-    const metodos = escriturasEnContacts(webhook!.texto).map((e) => e.metodo)
-    expect(metodos).toContain('insert')
+  it('lee de verdad el código: encuentra las escrituras de cada webhook', () => {
+    for (const ruta of WEBHOOKS) {
+      const webhook = fuentes.find((f) => f.ruta === ruta)
+      expect(webhook, ruta).toBeDefined()
+      const metodos = escriturasEnContacts(webhook!.texto).map((e) => e.metodo)
+      expect(metodos, ruta).toContain('insert')
+    }
   })
 
   it('ningún otro archivo de src/', () => {
     const malos: string[] = []
     for (const { ruta, texto } of fuentes) {
-      if (ruta === WEBHOOK) continue
+      if (WEBHOOKS.includes(ruta)) continue
       for (const e of escriturasEnContacts(texto)) {
         const p = problema(e)
         if (!p) continue

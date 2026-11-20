@@ -16,6 +16,9 @@ export default defineConfig({
       ENCRYPTION_KEY:
         "0000000000000000000000000000000000000000000000000000000000000000",
       META_APP_SECRET: "test-meta-app-secret",
+      // Las pruebas heredadas de wacrm son de Meta; las del bloque 5 pasan su
+      // proveedor a mano.
+      WHATSAPP_PROVEEDOR: "meta",
       // Las pruebas de wacrm leen el catálogo inglés (alias de arriba); la
       // app, sin la variable, arranca en español.
       NEXT_PUBLIC_APP_LOCALE: "en",
