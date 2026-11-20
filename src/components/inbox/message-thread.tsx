@@ -6,6 +6,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { usePresence } from "@/hooks/use-presence";
 import { PresenceDot } from "@/components/presence/presence-dot";
 import { presenceLabel } from "@/lib/presence";
+import { BotonClienteMovil } from "@/components/inbox/panel-ecovit-seguro";
 import { cn } from "@/lib/utils";
 import type {
   Conversation,
@@ -1067,6 +1068,10 @@ export function MessageThread({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* ECOVIT (bloque 3): debajo de lg no hay barra lateral; el cliente
+              de ECOVIT se abre en una hoja desde abajo. */}
+          <BotonClienteMovil conversationId={conversation?.id ?? null} contact={contact} />
+
           {/* Contact-panel toggle — desktop only. The contact sidebar
               eats a chunk of horizontal width that crowds the thread on
               smaller laptops; this lets agents reclaim it when they just

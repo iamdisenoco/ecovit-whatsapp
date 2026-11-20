@@ -4,7 +4,8 @@ import { describe, expect, it } from 'vitest'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 
-import { VistaPanelEcovit } from './panel-ecovit'
+import { PanelEcovit, VistaPanelEcovit } from './panel-ecovit'
+import { BotonClienteMovil, LimiteErrorPanel } from './panel-ecovit-seguro'
 import { rutasEcovit, vistaPanel, type ClienteDeConversacion, type LecturaPanel } from '@/lib/ecovit/panel-cliente'
 
 const RUTAS = rutasEcovit('https://comercial.ecovit.test')
@@ -114,5 +115,50 @@ describe('panel del cliente de ECOVIT', () => {
     expect(texto).toContain('Constructora Andina')
     expect(html).not.toContain('href=')
     expect(texto).toContain('falta NEXT_PUBLIC_ECOVIT_URL')
+  })
+})
+
+// ── Revisión del bloque 3: sin conversación, límite de error y hoja móvil ──
+
+describe('panel: sin conversación, límite de error y botón móvil', () => {
+  const contacto = { id: 'ct-1', enlace_estado: 'enlazado', enlace_detalle: null }
+
+  it('sin conversación activa no se queda «buscando»', () => {
+    const html = renderToStaticMarkup(React.createElement(PanelEcovit, { conversationId: null, contact: contacto }))
+    expect(html).toContain('Abre una conversación para ver su cliente.')
+    expect(html).not.toContain('Buscando el cliente')
+  })
+
+  it('testigo: con conversación y número enlazado sí empieza buscando', () => {
+    const html = renderToStaticMarkup(React.createElement(PanelEcovit, { conversationId: 'conv-1', contact: contacto }))
+    expect(html).toContain('Buscando el cliente')
+  })
+
+  it('el límite de error muestra el error real en vez de tumbar la barra', () => {
+    const estado = LimiteErrorPanel.getDerivedStateFromError(new TypeError("Cannot read properties of undefined (reading 'nombre')"))
+    const limite = new LimiteErrorPanel({ children: React.createElement('p', null, 'panel') })
+    limite.state = estado
+    const html = renderToStaticMarkup(limite.render() as React.ReactElement)
+    expect(html).toContain("No se pudo mostrar el cliente de ECOVIT: Cannot read properties of undefined (reading &#x27;nombre&#x27;)")
+    expect(html).not.toContain('panel</p>')
+  })
+
+  it('testigo: sin error, el límite deja pasar el panel', () => {
+    const limite = new LimiteErrorPanel({ children: React.createElement('p', null, 'panel') })
+    expect(renderToStaticMarkup(limite.render() as React.ReactElement)).toBe('<p>panel</p>')
+  })
+
+  it('el botón «Cliente» va solo debajo de lg, mide 44 px y no monta el panel cerrado', () => {
+    const html = renderToStaticMarkup(React.createElement(BotonClienteMovil, { conversationId: 'conv-1', contact: contacto }))
+    expect(html).toContain('Cliente')
+    expect(html).toContain('lg:hidden')
+    expect(html).toContain('min-h-11')
+    expect(html).toContain('min-w-11')
+    expect(html).not.toContain('Cliente en ECOVIT')
+    expect(html).not.toContain('Buscando el cliente')
+  })
+
+  it('sin contacto no hay botón', () => {
+    expect(renderToStaticMarkup(React.createElement(BotonClienteMovil, { conversationId: null, contact: null }))).toBe('')
   })
 })

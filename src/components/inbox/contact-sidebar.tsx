@@ -34,7 +34,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { getDateLocale } from "@/i18n/date-locale";
 import { contactHandle } from "@/lib/whatsapp/wa-identity";
 import { addContactTag, deleteContactTag } from "@/lib/contacts/tag-api";
-import { PanelEcovit } from "@/components/inbox/panel-ecovit";
+import { PanelEcovitSeguro } from "@/components/inbox/panel-ecovit-seguro";
 
 interface ContactSidebarProps {
   contact: Contact | null;
@@ -308,7 +308,7 @@ export function ContactSidebar({ contact, conversationId }: ContactSidebarProps)
 
           {/* ECOVIT (bloque 3): el cliente enlazado por teléfono, su
               vendedor y sus oportunidades abiertas. */}
-          <PanelEcovit conversationId={conversationId} contact={contact} />
+          <PanelEcovitSeguro conversationId={conversationId} contact={contact} />
 
           {/* Divider */}
           <div className="my-4 border-t border-border" />

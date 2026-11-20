@@ -58,6 +58,13 @@ export function PanelEcovit({
 
   const reintentar = useCallback(() => setIntento((n) => n + 1), []);
 
+  // Sin conversación no hay qué leer: no se queda «buscando» para siempre.
+  if (!conversationId) {
+    return (
+      <VistaPanelEcovit vista={{ tipo: "sin_conversacion" }} aviso={null} rutas={rutasEcovit()} />
+    );
+  }
+
   return (
     <VistaPanelEcovit
       vista={vistaPanel(contact.enlace_estado, contact.enlace_detalle, lectura)}
@@ -230,6 +237,11 @@ function Cuerpo({ vista, rutas }: { vista: VistaPanel; rutas: RutasEcovit | null
         </div>
       );
     }
+
+    case "sin_conversacion":
+      return (
+        <p className="px-1 text-xs text-muted-foreground">Abre una conversación para ver su cliente.</p>
+      );
 
     case "cliente_ajeno":
       return (

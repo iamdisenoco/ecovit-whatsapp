@@ -135,6 +135,8 @@ export type RutasEcovit = NonNullable<ReturnType<typeof rutasEcovit>>
 /** Lo que el panel va a mostrar, calculado del estado del enlace y la lectura. */
 export type VistaPanel =
   | { tipo: 'cargando' }
+  /** No hay conversación activa: no hay nada que leer. */
+  | { tipo: 'sin_conversacion' }
   | { tipo: 'cliente'; datos: ClienteDeConversacion }
   /** Enlazado, pero la función devolvió null: el cliente no es de su cartera. */
   | { tipo: 'cliente_ajeno' }
