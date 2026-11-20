@@ -129,9 +129,8 @@ describe('engineSendTemplate — header component', () => {
           BODY_COMPONENT,
         ],
       })
-      expect(state.insertedMessage?.media_url).toBe(
-        `https://cdn.example.com/header.${headerType}`,
-      )
+      // ECOVIT: la cabecera va a Meta, pero no a `media_url` (solo adjuntos).
+      expect(state.insertedMessage?.media_url).toBeNull()
     },
   )
 

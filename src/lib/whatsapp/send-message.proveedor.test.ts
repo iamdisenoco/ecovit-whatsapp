@@ -238,4 +238,26 @@ describe('envío por el proveedor', () => {
     ).rejects.toThrow(/botones y las listas/);
     expect(h.orden).toEqual([]);
   });
+
+  it('un texto con media_url se rechaza: el servicio no escribe media_url fuera de un adjunto', async () => {
+    await expect(
+      sendMessageToConversation(sesion(), 'acc-1', {
+        conversationId: 'cv-1',
+        messageType: 'text',
+        contentText: 'Hola',
+        mediaUrl: '/api/whatsapp/adjunto/account-acc-1/outbound/abc.png',
+      })
+    ).rejects.toThrow(/Solo los adjuntos/);
+    expect(h.orden).toEqual([]);
+  });
+
+  it('una plantilla no deja media_url escrita por el servicio', async () => {
+    await sendMessageToConversation(sesion(), 'acc-1', {
+      conversationId: 'cv-1',
+      messageType: 'template',
+      templateName: 'promo',
+      templateMessageParams: { header: { type: 'image', link: 'https://otro.example/x.png' } } as never,
+    }).catch(() => {});
+    expect(h.updates.some((u) => 'media_url' in u)).toBe(false);
+  });
 });

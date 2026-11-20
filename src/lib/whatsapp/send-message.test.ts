@@ -400,7 +400,10 @@ describe('sendMessageToConversation — template persistence (#483)', () => {
     expect(captured.conversation?.last_message_text).toBe('[template]');
   });
 
-  it('stores the header image so the Inbox can render it (#655)', async () => {
+  // ECOVIT (revisión de los bloques 4 y 6): la cabecera de la plantilla ya no se
+  // copia a `media_url` (la escribe la clave de servicio y solo los adjuntos la
+  // llevan). La burbuja de la plantilla queda sin la imagen de cabecera.
+  it('does NOT store the template header image in media_url (ECOVIT)', async () => {
     const captured: CapturedWrites = {};
     await sendMessageToConversation(
       sendPathDb(
@@ -421,21 +424,22 @@ describe('sendMessageToConversation — template persistence (#483)', () => {
         templateParams: ['A123', 'Friday'],
       }
     );
-    // ECOVIT: la URL la escribe el servicio, no el insert con sesión.
     expect(captured.message).not.toHaveProperty('media_url');
-    expect(adminUpdates).toContainEqual({ media_url: 'https://cdn.example.com/banner.png' });
+    expect(adminUpdates.some((u) => 'media_url' in u)).toBe(false);
   });
 
-  it('stores no media for a template without a media header', async () => {
+  it('rejects a template that carries a media_url (ECOVIT)', async () => {
     const captured: CapturedWrites = {};
-    await sendMessageToConversation(sendPathDb([TEMPLATE_ROW], captured), 'acct-1', {
-      conversationId: 'cv-1',
-      messageType: 'template',
-      templateName: 'order_update',
-      templateParams: ['A123', 'Friday'],
-      mediaUrl: 'https://cdn.example.com/ignored.png',
-    });
-    expect(captured.message).not.toHaveProperty('media_url');
+    await expect(
+      sendMessageToConversation(sendPathDb([TEMPLATE_ROW], captured), 'acct-1', {
+        conversationId: 'cv-1',
+        messageType: 'template',
+        templateName: 'order_update',
+        templateParams: ['A123', 'Friday'],
+        mediaUrl: 'https://cdn.example.com/ignored.png',
+      })
+    ).rejects.toThrow(/Solo los adjuntos/);
+    expect(captured.message).toBeUndefined();
     expect(adminUpdates.some((u) => 'media_url' in u)).toBe(false);
   });
 });

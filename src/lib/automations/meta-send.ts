@@ -14,7 +14,6 @@ import { assertConversationInAccount } from '@/lib/whatsapp/conversation-scope'
 import {
   resolveTemplateRow,
   templateContentText,
-  templateHeaderMediaUrl,
 } from '@/lib/whatsapp/template-body'
 import { supabaseAdmin } from './admin-client'
 import { getT } from '@/lib/i18n/translate'
@@ -148,7 +147,8 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
         content_type: 'template',
         content_text: texto,
         template_name: input.templateName,
-        media_url: templateHeaderMediaUrl(fila),
+        // Solo los adjuntos llevan media_url (revisión de los bloques 4 y 6).
+        media_url: null,
       },
       previa: texto ?? `[template:${input.templateName}]`,
     })
@@ -282,7 +282,8 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     sender_type: 'bot',
     content_type,
     content_text,
-    media_url: templateHeaderMediaUrl(templateRow),
+    // ECOVIT: solo los adjuntos llevan media_url (revisión de los bloques 4 y 6).
+    media_url: null,
     template_name,
     message_id: waMessageId,
     status: 'sent',

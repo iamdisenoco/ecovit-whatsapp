@@ -55,7 +55,6 @@ import {
   resolveTemplateRow,
   templateBodyParams,
   templateContentText,
-  templateHeaderMediaUrl,
 } from '@/lib/whatsapp/template-body';
 
 export const MEDIA_KINDS = ['image', 'video', 'document', 'audio'] as const;
@@ -155,6 +154,17 @@ export function validateSendMessageParams(params: {
     throw new SendMessageError(
       'bad_request',
       'content_text is required for text messages',
+      400
+    );
+  }
+
+  // ECOVIT (revisión del bloque 5): `media_url` la escribe la clave de servicio,
+  // así que solo la llevan los adjuntos (y pasan por `urlParaProveedor`). Un
+  // texto, una plantilla o un interactivo con `media_url` se rechaza.
+  if (!isMediaKind && mediaUrl) {
+    throw new SendMessageError(
+      'bad_request',
+      'Solo los adjuntos (imagen, video, audio o documento) llevan archivo.',
       400
     );
   }
@@ -392,10 +402,11 @@ export async function sendMessageToConversation(
     }
   }
   const idMensaje = randomUUID();
-  const mediaUrlFila =
-    messageType === 'template'
-      ? templateHeaderMediaUrl(templateRow, templateMessageParams)
-      : mediaUrl || null;
+  // Solo un adjunto, y solo el que ya pasó por `urlParaProveedor` (urlEnvio
+  // existe): esa es la URL interna verificada. Nada más llega a `media_url`
+  // con la clave de servicio (ni la cabecera de una plantilla, que podía
+  // venir de los parámetros del que llama).
+  const mediaUrlFila = isMediaKind && urlEnvio ? mediaUrl! : null;
   const { data: messageRecord, error: msgError } = await db
     .from('messages')
     .insert({
