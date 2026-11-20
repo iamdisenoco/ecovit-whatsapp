@@ -141,7 +141,7 @@ export function AiUsageCard() {
             value={String(days)}
             onValueChange={(v) => setDays(Number(v))}
           >
-            <SelectTrigger className="w-32 flex-shrink-0">
+            <SelectTrigger className="w-auto min-w-36 flex-shrink-0 whitespace-nowrap">
               {/* Sin función, base-ui muestra el valor crudo («30»). */}
               <SelectValue>{(v: string) => t('window', { days: Number(v) })}</SelectValue>
             </SelectTrigger>
