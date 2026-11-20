@@ -65,6 +65,9 @@ export async function GET(
       .from('messages')
       .select('id')
       .eq('media_url', `/api/whatsapp/media/${mediaId}`)
+      // Solo un adjunto que mandó un CLIENTE: un mensaje del negocio con esa
+      // URL lo puede fabricar un vendedor.
+      .eq('sender_type', 'customer')
       .limit(1)
     if (!visible || visible.length === 0) {
       return NextResponse.json({ error: 'No encontrado' }, { status: 404 })

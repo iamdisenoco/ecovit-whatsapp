@@ -7,6 +7,7 @@ const h = vi.hoisted(() => ({
   metaMimeType: 'image/jpeg',
   rateLimitOk: true,
   visible: true as boolean,
+  remitente: 'customer' as string,
 }))
 
 // ECOVIT · bloque 5: whatsapp_config se lee con la clave de servicio (con la sesión da 42501).
@@ -30,11 +31,25 @@ vi.mock('@/lib/supabase/server', () => ({
       getUser: async () => ({ data: { user: h.user }, error: null }),
     },
     from(table: string) {
+      const filtros: Record<string, unknown> = {}
       const chain = {
         select: () => chain,
-        eq: () => chain,
+        eq: (col: string, val: unknown) => {
+          filtros[col] = val
+          return chain
+        },
         // ECOVIT: ¿quien pide ve un mensaje con este adjunto? (RLS de messages)
-        limit: async () => ({ data: table === 'messages' && h.visible !== false ? [{ id: 'msg-1' }] : [], error: null }),
+        limit: async () => ({
+          // Una sola fila visible, con el remitente de h.remitente: la consulta
+          // solo la ve si sus filtros la dejan pasar.
+          data:
+            table === 'messages' &&
+            h.visible !== false &&
+            (filtros.sender_type === undefined || filtros.sender_type === h.remitente)
+              ? [{ id: 'msg-1' }]
+              : [],
+          error: null,
+        }),
         maybeSingle: async () => ({
           data: table === 'profiles' && h.accountId ? { account_id: h.accountId } : null,
         }),
@@ -85,6 +100,7 @@ beforeEach(() => {
   h.metaMimeType = 'image/jpeg'
   h.rateLimitOk = true
   h.visible = true
+  h.remitente = 'customer'
 })
 
 describe('GET /api/whatsapp/media/[mediaId]', () => {
@@ -136,6 +152,12 @@ describe('GET /api/whatsapp/media/[mediaId]', () => {
 
   it('ECOVIT: 404 si quien pide no ve ningún mensaje con ese adjunto (el token es de servicio)', async () => {
     h.visible = false
+    const res = await call()
+    expect(res.status).toBe(404)
+  })
+
+  it('ECOVIT: 404 si el único mensaje con ese adjunto lo escribió un vendedor (se puede fabricar)', async () => {
+    h.remitente = 'agent'
     const res = await call()
     expect(res.status).toBe(404)
   })

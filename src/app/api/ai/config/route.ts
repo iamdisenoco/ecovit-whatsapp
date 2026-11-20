@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
 import {
-  getCurrentAccount,
   requireRole,
   toErrorResponse,
 } from '@/lib/auth/account'
@@ -22,15 +21,15 @@ function bad(message: string) {
 }
 
 /**
- * GET /api/ai/config
+ * GET /api/ai/config  (admin+)
  *
- * Any member may read the config so the inbox/settings can reflect
- * whether AI is set up. The encrypted key is NEVER returned — only a
- * `has_key` flag; the settings form shows a masked placeholder.
+ * ECOVIT · bloque 5: solo la dirección. El `system_prompt` y la configuración
+ * del bot son de la empresa, no de cada vendedor (wacrm lo abría a todos).
+ * The encrypted key is NEVER returned — only a `has_key` flag.
  */
 export async function GET() {
   try {
-    const { accountId } = await getCurrentAccount()
+    const { accountId } = await requireRole('admin')
 
     const { data, error } = await supabaseAdmin()
       .from('ai_configs')
