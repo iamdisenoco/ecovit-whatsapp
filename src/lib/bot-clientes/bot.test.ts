@@ -271,11 +271,10 @@ describe('piezas', () => {
     expect(costoUsd({ entrada: 1000, salida: 100, cacheLectura: 2000, cacheEscritura: 0 })).toBe(0.0032);
   });
 
-  it('el revisor deja pasar un código con puntos que fue consultado, y frena uno que no', () => {
-    const refs = new Map([['1.234.567', { codigo: '1.234.567', descripcion: 'x', unidad: null, precio_base: 10 }]]);
-    expect(revisarRespuesta('La referencia 1.234.567 está disponible.', refs).ok).toBe(true);
-    expect(revisarRespuesta('Cuesta 1.234.567', new Map()).ok).toBe(false);
-    expect(revisarRespuesta('[[PRECIO:NO-EXISTE]]', refs).ok).toBe(false);
+  it('la marca de precio de algo no consultado o sin precio no sale', () => {
+    const refs = new Map([['FX-9', { codigo: 'FX-9', descripcion: 'x', unidad: null, precio_base: null }]]);
+    expect(revisarRespuesta('[[PRECIO:NO-EXISTE]]', refs, PERMITIDOS).ok).toBe(false);
+    expect(revisarRespuesta('[[PRECIO:FX-9]]', refs, PERMITIDOS).ok).toBe(false);
   });
 
   it('a Claude le llegan turnos alternados que empiezan por el cliente', () => {
@@ -289,50 +288,97 @@ describe('piezas', () => {
   });
 });
 
-describe('revisor: ninguna cifra de plata en el texto del modelo', () => {
-  const frena = [
+// ── Revisor por lista blanca (tercera revisión) ─────────────────────────────
+// Lo que el modelo vio de la herramienta en el turno: es lo único que da
+// permiso a un número. Sin precios (así lo arma `paraElModelo`).
+const PERMITIDOS = paraElModelo([
+  { codigo: 'FX-1020', descripcion: 'Fluxómetro 1/2 pulgada para orinal 3.5 lpf', unidad: 'UND', precio_base: 148000, disponibilidad: 12 },
+  { codigo: '1020', descripcion: 'Llave terminal 25 mm', unidad: 'UND', precio_base: null, disponibilidad: 'a confirmar' },
+] as never);
+
+describe('revisor: un número solo pasa si lo devolvió la herramienta', () => {
+  it('la lista blanca no trae el precio', () => {
+    expect(PERMITIDOS).not.toContain('148000');
+  });
+
+  // Las frases de plata de la revisora (y de las revisiones anteriores): todas rojas.
+  const plata = [
+    'Te lo dejo a 9 con 900',
+    'Lo dejamos en 120',
+    '148 lukas',
+    '50 euros',
+    '€45',
+    '45 bucks each',
     'Vale 148000 la unidad',
     'Son unos 148 mil',
     'Cuesta 1.5 millones',
-    'Cuesta 1,5 millón',
     'Sale en 150k',
-    'Queda en 148.000',
     'Queda en 148 000',
-    'Unas 150 lucas',
     'Son 2 palos',
     'COP 500',
     'Precio: $90',
-    'Son 12 dólares',
-    'Más o menos 2 mill',
-    // Segunda revisión: en palabras, porcentajes, descuentos y números chicos con precio.
     'Sale en ciento cincuenta mil',
-    'Son doscientos mil',
     'Vale novecientos',
-    'Unos cien',
-    'Tres millones',
     'Tiene un 10% de descuento',
     'Descuento del quince por ciento',
-    'Te puedo dar un descuento',
     'Cuesta 950',
     '850 cada uno',
-    'Son 90 c/u',
-    'Queda a 300 la unidad',
-    'El precio es de 420',
+    'Te lo dejo en mil',
+    // Freno absoluto aunque el número esté en la lista blanca:
+    'El FX-1020 queda en 1020 pesos',
+    'Hay 12% menos',
+    'Te hago un descuento en el FX-1020',
+    'Son 12 dólares',
   ];
-  const deja = [
-    'Tenemos 3 disponibles.',
-    'Para 200 unidades te paso con tu asesor.',
-    'La referencia FX-1234 está disponible.',
-    'El fluxómetro de 1/2 pulgada viene en caja de 12.',
-    'Viene con 3 m de manguera y tubo de 25 mm.',
-    'Tenemos 2 modelos: el de orinal y el de sanitario.',
-    'Hay 12 en existencia y viene en caja de 6.',
-    '¿Cuántas unidades necesitas? Con eso te paso con tu asesor.',
+  for (const t of plata) {
+    it(`frena: «${t}»`, () => expect(revisarRespuesta(t, new Map(), PERMITIDOS).ok).toBe(false));
+  }
+
+  // Números que la herramienta NO devolvió: se frenan aunque no sean plata.
+  const ajenos = [
+    'Te llamo al 3001234567',
+    'Te llega el 24 de mayo',
+    'Para 200 unidades te paso con tu asesor',
+    'Abrimos a las 8',
   ];
-  for (const t of frena) {
-    it(`frena: «${t}»`, () => expect(revisarRespuesta(t, new Map()).ok).toBe(false));
+  for (const t of ajenos) {
+    it(`frena (no lo devolvió el catálogo): «${t}»`, () =>
+      expect(revisarRespuesta(t, new Map(), PERMITIDOS).ok).toBe(false));
   }
-  for (const t of deja) {
-    it(`deja: «${t}»`, () => expect(revisarRespuesta(t, new Map()).ok).toBe(true));
+
+  const normales = [
+    'La referencia 1020 está disponible.',
+    'El FX-1020 es para orinal.',
+    'Hay 12 en existencia.',
+    'Es de 1/2 pulgada.',
+    'Gasta 3.5 lpf por descarga.',
+    'La llave terminal es de 25 mm.',
+    'Tenemos dos modelos: el de orinal y la llave.',
+    'Te cuento de una referencia que sirve.',
+    'Es cien por cien compatible.',
+    'Hay mil cosas que te puedo contar del catálogo.',
+    '¿Qué referencia buscas?',
+    'La disponibilidad de la llave está a confirmar.',
+    'Con gusto te ayudo.',
+    'Se vende por UND.',
+    'Para cotizar, tu asesor te escribe.',
+    'El FX-1020 y la 1020 son distintos.',
+    '¿Te sirve la de 1/2 pulgada?',
+    'Tenemos 12 unidades del FX-1020.',
+    'Sí, es para orinal.',
+    'No tengo ese dato confirmado.',
+    'Una de las dos sirve para sanitario.',
+    'Hola, ¿en qué te ayudo hoy?',
+    'Es la referencia 1020, llave terminal de 25 mm.',
+    'Hay 12 del FX-1020 y la 1020 está a confirmar.',
+    'Te lo confirmo en una semana con tu asesor.',
+  ];
+  for (const t of normales) {
+    it(`deja: «${t}»`, () => expect(revisarRespuesta(t, new Map(), PERMITIDOS).ok).toBe(true));
   }
+
+  it('los números del cliente no dan permiso: «sí, en 120» se frena', () => {
+    // El cliente preguntó «¿me lo dejas en 120?»; eso no está en `permitidos`.
+    expect(revisarRespuesta('Sí, en 120', new Map(), PERMITIDOS).ok).toBe(false);
+  });
 });

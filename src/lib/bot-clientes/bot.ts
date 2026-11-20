@@ -245,6 +245,9 @@ export async function atenderConBot(deps: DependenciasBot, conversationId: strin
     const respuestasAntes = (conv as { ai_reply_count?: number } | null)?.ai_reply_count ?? 0;
 
     const consultadas = new Map<string, ReferenciaCatalogo>();
+    // Lo que el modelo vio de las herramientas en ESTE turno: la lista blanca
+    // de números del revisor. Sin precios (`paraElModelo` no los manda).
+    let permitidos = '';
     let texto: string | null = null;
     for (let vuelta = 0; vuelta < MAX_VUELTAS && texto === null; vuelta++) {
       let resp: RespuestaClaude;
@@ -309,7 +312,9 @@ export async function atenderConBot(deps: DependenciasBot, conversationId: strin
         }
         const refs = ((data as { referencias?: ReferenciaCatalogo[] } | null)?.referencias ?? []) as ReferenciaCatalogo[];
         for (const r of refs) consultadas.set(r.codigo, r);
-        resultados.push({ type: 'tool_result', tool_use_id: u.id, content: paraElModelo(refs) });
+        const visto = paraElModelo(refs);
+        permitidos += `\n${visto}`;
+        resultados.push({ type: 'tool_result', tool_use_id: u.id, content: visto });
       }
       mensajes.push({ role: 'assistant', content: resp.content });
       mensajes.push({ role: 'user', content: resultados });
@@ -319,7 +324,7 @@ export async function atenderConBot(deps: DependenciasBot, conversationId: strin
       return pasarAVendedor(deps, conversationId, 'enredo', resumenDe(contexto, 'El bot no llegó a una respuesta.'), true);
     }
 
-    const revision = revisarRespuesta(texto, consultadas);
+    const revision = revisarRespuesta(texto, consultadas, permitidos);
     if (!revision.ok) {
       console.warn('[bot-clientes] respuesta bloqueada por el revisor:', revision.motivo);
       return pasarAVendedor(deps, conversationId, 'sin_dato', resumenDe(contexto, `Respuesta del bot bloqueada: ${revision.motivo}.`), true);
