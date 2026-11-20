@@ -216,8 +216,14 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   }
   if (lastError) throw lastError
 
+  // ECOVIT (bloque 3): `contacts.phone` no se reescribe, ni con la clave de
+  // servicio: cambiarlo re-enlaza el chat a otro cliente de ECOVIT sin que
+  // nadie lo vea. Solo el webhook pone números. Meta aceptó una variante: se
+  // anota en el registro y el contacto queda como estaba.
   if (sendTarget.isPhone && workingPhone !== sanitized) {
-    await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
+    console.warn(
+      `[meta-send] Meta aceptó ${workingPhone} para el contacto ${contact.id} (guardado: ${sanitized}); contacts.phone no se toca`,
+    )
   }
 
   // Persist the sent message so it appears in the inbox with a real

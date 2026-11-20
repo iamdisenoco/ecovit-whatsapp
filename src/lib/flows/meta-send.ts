@@ -151,8 +151,14 @@ export async function engineSendText(
   }
   if (lastError) throw lastError
 
+  // ECOVIT (bloque 3): `contacts.phone` no se reescribe, ni con la clave de
+  // servicio: cambiarlo re-enlaza el chat a otro cliente de ECOVIT sin que
+  // nadie lo vea. Solo el webhook pone números. Meta aceptó una variante: se
+  // anota en el registro y el contacto queda como estaba.
   if (sendTarget.isPhone && workingPhone !== sanitized) {
-    await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
+    console.warn(
+      `[meta-send] Meta aceptó ${workingPhone} para el contacto ${contact.id} (guardado: ${sanitized}); contacts.phone no se toca`,
+    )
   }
 
   const { error: msgErr } = await db.from('messages').insert({
@@ -268,8 +274,14 @@ export async function engineSendMedia(
   }
   if (lastError) throw lastError
 
+  // ECOVIT (bloque 3): `contacts.phone` no se reescribe, ni con la clave de
+  // servicio: cambiarlo re-enlaza el chat a otro cliente de ECOVIT sin que
+  // nadie lo vea. Solo el webhook pone números. Meta aceptó una variante: se
+  // anota en el registro y el contacto queda como estaba.
   if (sendTarget.isPhone && workingPhone !== sanitized) {
-    await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
+    console.warn(
+      `[meta-send] Meta aceptó ${workingPhone} para el contacto ${contact.id} (guardado: ${sanitized}); contacts.phone no se toca`,
+    )
   }
 
   // content_type='image'|'video'|'document' — these are already in the
@@ -440,8 +452,14 @@ async function sendInteractiveViaMeta(
   }
   if (lastError) throw lastError
 
+  // ECOVIT (bloque 3): `contacts.phone` no se reescribe, ni con la clave de
+  // servicio: cambiarlo re-enlaza el chat a otro cliente de ECOVIT sin que
+  // nadie lo vea. Solo el webhook pone números. Meta aceptó una variante: se
+  // anota en el registro y el contacto queda como estaba.
   if (sendTarget.isPhone && workingPhone !== sanitized) {
-    await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
+    console.warn(
+      `[meta-send] Meta aceptó ${workingPhone} para el contacto ${contact.id} (guardado: ${sanitized}); contacts.phone no se toca`,
+    )
   }
 
   // Persist the bot's prompt to the messages table so it appears in
