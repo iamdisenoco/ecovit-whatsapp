@@ -1,5 +1,22 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AiProvider, AiUsage } from './types'
+import { costoUsd } from '@/lib/bot-clientes/costo'
+
+/**
+ * ECOVIT · RF-M03.11: el costo en USD de una llamada, con las tarifas de
+ * Sonnet 5.5 (`lib/bot-clientes/costo.ts`), para que el borrador y el
+ * playground cuenten para el tope mensual igual que el bot. Si la cuenta usa
+ * otro modelo, es una estimación con esas mismas tarifas: mejor contar de más
+ * que dejar gasto fuera del tope.
+ */
+export function costoDeUso(usage: AiUsage): number {
+  return costoUsd({
+    entrada: usage.promptTokens,
+    salida: usage.completionTokens,
+    cacheLectura: usage.cacheReadTokens ?? 0,
+    cacheEscritura: usage.cacheWriteTokens ?? 0,
+  })
+}
 
 export interface LogAiUsageArgs {
   accountId: string
@@ -41,6 +58,9 @@ export async function logAiUsage(
       prompt_tokens: args.usage.promptTokens,
       completion_tokens: args.usage.completionTokens,
       total_tokens: args.usage.totalTokens,
+      cache_lectura_tokens: args.usage.cacheReadTokens ?? 0,
+      cache_escritura_tokens: args.usage.cacheWriteTokens ?? 0,
+      costo_usd: costoDeUso(args.usage),
     })
     if (error) {
       console.error('[ai usage] log insert failed:', error)

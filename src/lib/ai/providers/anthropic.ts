@@ -16,7 +16,12 @@ const ANTHROPIC_VERSION = '2023-06-01'
 
 interface AnthropicResponse {
   content?: { type?: string; text?: string }[]
-  usage?: { input_tokens?: number; output_tokens?: number }
+  usage?: {
+    input_tokens?: number
+    output_tokens?: number
+    cache_read_input_tokens?: number
+    cache_creation_input_tokens?: number
+  }
 }
 
 /**
@@ -82,9 +87,15 @@ export async function generateAnthropic(args: ProviderArgs): Promise<ProviderRes
     })
   }
   // Anthropic reports input/output but no total — normalizeUsage sums.
-  const usage = normalizeUsage({
+  const base = normalizeUsage({
     prompt: data?.usage?.input_tokens,
     completion: data?.usage?.output_tokens,
   })
+  const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0)
+  const usage = base && {
+    ...base,
+    cacheReadTokens: n(data?.usage?.cache_read_input_tokens),
+    cacheWriteTokens: n(data?.usage?.cache_creation_input_tokens),
+  }
   return { text, usage }
 }

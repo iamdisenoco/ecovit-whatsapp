@@ -29,6 +29,31 @@ describe('logAiUsage', () => {
       prompt_tokens: 30,
       completion_tokens: 6,
       total_tokens: 36,
+      cache_lectura_tokens: 0,
+      cache_escritura_tokens: 0,
+      costo_usd: 0.00012,
+    })
+  })
+
+  it('ECOVIT: anota el caché y el costo con las tarifas de Sonnet 5.5', async () => {
+    const { db, insert } = fakeDb()
+    await logAiUsage(db, {
+      accountId: 'acct-1',
+      conversationId: null,
+      mode: 'draft',
+      provider: 'anthropic',
+      model: 'claude-sonnet-5-5',
+      usage: {
+        promptTokens: 1_000_000,
+        completionTokens: 100_000,
+        totalTokens: 1_100_000,
+        cacheReadTokens: 1_000_000,
+        cacheWriteTokens: 0,
+      },
+    })
+    expect(insert.mock.calls[0][0]).toMatchObject({
+      cache_lectura_tokens: 1_000_000,
+      costo_usd: 3.1,
     })
   })
 

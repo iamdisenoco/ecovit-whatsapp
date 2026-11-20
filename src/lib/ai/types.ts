@@ -48,6 +48,9 @@ export interface AiUsage {
   promptTokens: number
   completionTokens: number
   totalTokens: number
+  /** ECOVIT: caché de Anthropic (aparte de `promptTokens`), para el costo. */
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
 }
 
 /** Raw text + usage a provider adapter returns before handoff parsing. */
