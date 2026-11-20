@@ -31,7 +31,6 @@ import {
 } from "lucide-react";
 import { format, isToday, isYesterday, differenceInHours } from "date-fns";
 import { useLocale, useTranslations } from "next-intl";
-import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -1051,8 +1050,11 @@ export function MessageThread({
     <div className={cn("flex min-w-0 flex-1 flex-col", DOODLE_BG_CLASSES)}>
       {/* Header — solid card surface sits on top of the doodle so the
           name/avatar/dropdowns stay legible. */}
-      <div className="flex items-center justify-between gap-2 border-b border-border bg-card px-3 py-3 sm:px-4">
-        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+      {/* `flex-wrap`: cuando el ancho no alcanza (portátil con la barra del
+          cliente abierta, o el celular) las acciones bajan a una segunda
+          línea en vez de aplastar el nombre del cliente hasta «M…». */}
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2 border-b border-border bg-card px-3 py-3 sm:px-4">
+        <div className="flex min-w-[11rem] flex-1 items-center gap-2 sm:gap-3">
           {/* Back-to-list button — mobile only. Hidden on lg+ where the
               conversation list is always visible next to the thread. */}
           {onBack && (
@@ -1070,25 +1072,24 @@ export function MessageThread({
           </div>
           <div className="min-w-0">
             <h2 className="truncate text-sm font-semibold text-foreground">{displayName}</h2>
-            <p className="truncate text-xs text-muted-foreground">
-              {contactHandle(contact)}
+            {/* El reloj de la ventana de 24 h va en la línea del teléfono:
+                así no compite por ancho con las acciones ni se les monta. */}
+            <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="truncate">{contactHandle(contact)}</span>
+              {sessionInfo.remaining && <span
+                className={cn(
+                  "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-border px-1.5 text-[10px] leading-4",
+                  sessionInfo.expired ? "text-red-400" : "text-primary"
+                )}
+              >
+                <Clock className="h-3 w-3" aria-hidden />
+                {sessionInfo.remaining}
+              </span>}
             </p>
           </div>
-          {/* Session timer badge — hidden on the narrowest phones so
-              the name + back arrow keep their room. */}
-          <Badge
-            variant="outline"
-            className={cn(
-              "ml-1 hidden gap-1 border-border text-[10px] sm:inline-flex sm:ml-2",
-              sessionInfo.expired ? "text-red-400" : "text-primary"
-            )}
-          >
-            <Clock className="h-3 w-3" />
-            {sessionInfo.remaining}
-          </Badge>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
           {/* ECOVIT (bloque 3): debajo de lg no hay barra lateral; el cliente
               de ECOVIT se abre en una hoja desde abajo. */}
           <BotonClienteMovil conversationId={conversation?.id ?? null} contact={contact} />
@@ -1175,8 +1176,8 @@ export function MessageThread({
                 assignedAgentId ? "text-primary" : "text-muted-foreground"
               )}
             >
-              <UserPlus className="h-3 w-3" />
-              <span className="hidden sm:inline">{assignLabel}</span>
+              <UserPlus className="h-3 w-3 shrink-0" />
+              <span className="hidden max-w-[9rem] truncate whitespace-nowrap sm:inline">{assignLabel}</span>
               <ChevronDown className="h-3 w-3" />
             </DropdownMenuTrigger>
             <DropdownMenuContent

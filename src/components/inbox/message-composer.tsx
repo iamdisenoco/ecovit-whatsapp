@@ -776,7 +776,9 @@ export function MessageComposer({
             // The placeholder text also surfaces the read-only state.
             title={readOnly ? t("readOnlyTitle") : undefined}
             className={cn(
-              "order-1 min-w-0 flex-1 resize-none rounded-xl border border-border bg-muted px-4 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none transition-colors focus:border-primary/50 sm:order-2",
+              // El placeholder va en UNA línea con elipsis: en un campo de una fila,
+              // partido en dos quedaba cortado por la mitad.
+              "order-1 min-w-0 flex-1 resize-none rounded-xl border border-border bg-muted px-4 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none transition-colors focus:border-primary/50 placeholder:truncate sm:order-2",
               (sessionExpired || readOnly) && "cursor-not-allowed opacity-50"
             )}
           />
