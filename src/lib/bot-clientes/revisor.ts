@@ -81,13 +81,12 @@ function normalizarNumero(n: string): string[] {
 }
 
 /** Los números (y palabras) que aparecen en lo que vio el modelo de las herramientas. */
-export function listaBlanca(permitidos: string): { numeros: Set<string>; palabras: Set<string> } {
+export function listaBlanca(permitidos: string): { numeros: Set<string> } {
   const numeros = new Set<string>();
   for (const n of permitidos.match(DIGITOS) ?? []) for (const v of normalizarNumero(n)) numeros.add(v);
   // Cada tramo de dígitos suelto también («FX-1020/3» → 1020 y 3).
   for (const n of permitidos.match(/\d+/g) ?? []) numeros.add(n);
-  const palabras = new Set((permitidos.toLowerCase().match(/\p{L}+/gu) ?? []).filter((w) => PALABRAS_NUMERO.has(w)));
-  return { numeros, palabras };
+  return { numeros };
 }
 
 /** null si pasa; si no, por qué se frena. */
@@ -105,20 +104,118 @@ export function numeroNoPermitido(texto: string, permitidos: string): string | n
   }
 
   const tokens = (texto.replace(MODISMOS, ' ').toLowerCase().match(/\p{L}+|\d+(?:[.,]\d+)*/gu) ?? []);
-  const esNumero = (t: string | undefined) => !!t && (/^\d/.test(t) || PALABRAS_NUMERO.has(t));
-  for (let i = 0; i < tokens.length; i++) {
-    const t = tokens[i];
-    if (!PALABRAS_NUMERO.has(t) || blanca.palabras.has(t)) continue;
+
+  // Frase de precio + cualquier número (dígitos, palabras o romano): frena
+  // SIEMPRE, aunque el número esté en la lista blanca («te lo dejo en 1020»).
+  const frase = fraseDePrecio(tokens);
+  if (frase) return `frase de precio: «${frase}»`;
+
+  // Cantidades en palabras: se comparan por su VALOR con la lista blanca.
+  for (let i = 0; i < tokens.length; ) {
+    if (!PALABRAS_NUMERO.has(tokens[i])) {
+      i++;
+      continue;
+    }
+    // La corrida entera: «ciento cincuenta», «mil veinte», «treinta y dos».
+    let j = i + 1;
+    while (
+      j < tokens.length &&
+      (PALABRAS_NUMERO.has(tokens[j]) || (tokens[j] === 'y' && PALABRAS_NUMERO.has(tokens[j + 1] ?? '')))
+    ) {
+      j++;
+    }
+    const corrida = tokens.slice(i, j).filter((t) => t !== 'y');
     const antes = tokens[i - 1];
-    const despues = tokens[i + 1];
-    const pegada =
-      esNumero(antes) ||
-      esNumero(despues) ||
-      (UNIONES.has(antes ?? '') && esNumero(tokens[i - 2])) ||
-      (UNIONES.has(despues ?? '') && esNumero(tokens[i + 2]));
-    const detrasDePrecio = DE_PRECIO.has(antes ?? '') && !ARTICULOS.has(t);
-    if (GRANDES.test(t) || pegada || detrasDePrecio) {
-      return `la cantidad «${t}» no la devolvió el catálogo`;
+    const despues = tokens[j];
+    const pegadaADigito =
+      /^\d/.test(antes ?? '') ||
+      /^\d/.test(despues ?? '') ||
+      (UNIONES.has(antes ?? '') && /^\d/.test(tokens[i - 2] ?? '')) ||
+      (UNIONES.has(despues ?? '') && /^\d/.test(tokens[j + 1] ?? ''));
+    const detrasDePrecio =
+      DE_PRECIO.has(antes ?? '') && !(corrida.length === 1 && ARTICULOS.has(corrida[0]));
+    const esCantidad =
+      corrida.length > 1 || corrida.some((t) => GRANDES.test(t)) || pegadaADigito || detrasDePrecio;
+    if (esCantidad) {
+      const valor = valorEnPalabras(corrida);
+      if (pegadaADigito || valor === null || !blanca.numeros.has(String(valor))) {
+        return `la cantidad «${corrida.join(' ')}» no la devolvió el catálogo`;
+      }
+    }
+    i = j;
+  }
+  return null;
+}
+
+const VALORES: Record<string, number> = {
+  un: 1, uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9,
+  diez: 10, once: 11, doce: 12, trece: 13, catorce: 14, quince: 15, dieciseis: 16, 'dieciséis': 16,
+  diecisiete: 17, dieciocho: 18, diecinueve: 19, veinte: 20, veintiuno: 21, veintiuna: 21,
+  veintidos: 22, 'veintidós': 22, veintitres: 23, 'veintitrés': 23, veinticuatro: 24, veinticinco: 25,
+  veintiseis: 26, 'veintiséis': 26, veintisiete: 27, veintiocho: 28, veintinueve: 29,
+  treinta: 30, cuarenta: 40, cincuenta: 50, sesenta: 60, setenta: 70, ochenta: 80, noventa: 90,
+  cien: 100, ciento: 100, doscientos: 200, doscientas: 200, trescientos: 300, trescientas: 300,
+  cuatrocientos: 400, cuatrocientas: 400, quinientos: 500, quinientas: 500, seiscientos: 600,
+  seiscientas: 600, setecientos: 700, setecientas: 700, ochocientos: 800, ochocientas: 800,
+  novecientos: 900, novecientas: 900,
+};
+
+/** «ciento cincuenta mil» → 150000; «mil veinte» → 1020. null si no se puede leer. */
+export function valorEnPalabras(palabras: string[]): number | null {
+  let total = 0;
+  let actual = 0;
+  for (const p of palabras) {
+    if (p === 'y') continue;
+    if (p === 'mil') {
+      total += (actual || 1) * 1000;
+      actual = 0;
+    } else if (p === 'millon' || p === 'millón' || p === 'millones') {
+      total = (total + (actual || 1)) * 1_000_000;
+      actual = 0;
+    } else if (p in VALORES) {
+      actual += VALORES[p];
+    } else {
+      return null;
+    }
+  }
+  return total + actual;
+}
+
+const ROMANO = /^[ivxlcdm]+$/;
+/** Lo que puede ir entre la frase y el número: «el precio ES DE 420», «cuesta UNOS 950». */
+const RELLENO = new Set(['es', 'de', 'unos', 'unas', 'como', 'solo', 'apenas', 'mas', 'más', 'o', 'menos', 'aprox', 'aproximadamente', 'eso', 'lo', 'te', 'en', 'a']);
+const FRASES_PRECIO: string[][] = [
+  ['te', 'lo', 'dejo', 'en'], ['te', 'lo', 'dejo', 'a'], ['te', 'lo', 'dejamos', 'en'], ['te', 'lo', 'dejamos', 'a'],
+  ['te', 'queda', 'en'], ['te', 'queda', 'a'], ['te', 'sale', 'en'], ['te', 'sale', 'a'],
+  ['queda', 'en'], ['sale', 'en'], ['quedan', 'en'], ['salen', 'en'],
+  ['el', 'valor', 'es'], ['valor'], ['vale'], ['valen'], ['cuesta'], ['cuestan'], ['precio'],
+];
+const POR_UNIDAD: string[][] = [['la', 'unidad'], ['c', 'u'], ['cada', 'uno'], ['cada', 'una'], ['por', 'unidad']];
+
+function esNumeroCualquiera(t: string | undefined): boolean {
+  return !!t && (/^\d/.test(t) || PALABRAS_NUMERO.has(t) || ROMANO.test(t));
+}
+
+function coincide(tokens: string[], i: number, frase: string[]): boolean {
+  return frase.every((w, k) => tokens[i + k] === w);
+}
+
+/** La frase de precio seguida de un número, o null. */
+export function fraseDePrecio(tokens: string[]): string | null {
+  for (let i = 0; i < tokens.length; i++) {
+    for (const f of FRASES_PRECIO) {
+      if (!coincide(tokens, i, f)) continue;
+      // Hasta tres palabras de relleno entre la frase y el número.
+      for (let k = i + f.length, saltos = 0; k < tokens.length && saltos <= 3; k++, saltos++) {
+        if (esNumeroCualquiera(tokens[k])) return `${f.join(' ')} ${tokens[k]}`;
+        if (!RELLENO.has(tokens[k])) break;
+      }
+    }
+    // «son N la unidad / c-u / cada uno»
+    if (tokens[i] === 'son' && esNumeroCualquiera(tokens[i + 1])) {
+      let k = i + 2;
+      while (k < tokens.length && PALABRAS_NUMERO.has(tokens[k])) k++;
+      if (POR_UNIDAD.some((u) => coincide(tokens, k, u))) return `son ${tokens[i + 1]} ${tokens.slice(k, k + 2).join(' ')}`;
     }
   }
   return null;

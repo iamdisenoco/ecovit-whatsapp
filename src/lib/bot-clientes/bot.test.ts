@@ -4,7 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { atenderConBot, mensajesParaClaude, paraElModelo, type DependenciasBot } from './bot';
 import { ErrorClaude, llamarClaude, type RespuestaClaude } from './claude';
 import { costoUsd, leerUso } from './costo';
-import { revisarRespuesta } from './revisor';
+import { revisarRespuesta, valorEnPalabras } from './revisor';
 import { t3PasoConAsesor, t9PrecioLista, TEXTOS } from './textos';
 
 type Rpc = { fn: string; args: Record<string, unknown> };
@@ -380,5 +380,36 @@ describe('revisor: un número solo pasa si lo devolvió la herramienta', () => {
   it('los números del cliente no dan permiso: «sí, en 120» se frena', () => {
     // El cliente preguntó «¿me lo dejas en 120?»; eso no está en `permitidos`.
     expect(revisarRespuesta('Sí, en 120', new Map(), PERMITIDOS).ok).toBe(false);
+  });
+});
+
+describe('revisor: frase de precio + número frena siempre (cuarta revisión)', () => {
+  const frenan = [
+    'Te lo dejo en 25',
+    'Son 25 la unidad',
+    'Te queda en 4.8',
+    'Te lo dejo en 1020', // 1020 SÍ está en la lista blanca: igual frena.
+    'Te sale en XXV',
+    'Queda en CXLVIII mil',
+    'El valor es veinticinco',
+    'Son 12 c/u', // 12 está en la lista blanca
+    'El precio es de 25',
+    'Cuesta unos doce',
+  ];
+  for (const t of frenan) {
+    it(`frena: «${t}»`, () => expect(revisarRespuesta(t, new Map(), PERMITIDOS).ok).toBe(false));
+  }
+
+  it('las palabras numéricas se comparan por su VALOR con la lista blanca', () => {
+    // «mil veinte» = 1020, que la herramienta devolvió; «mil treinta» no.
+    expect(revisarRespuesta('Es la referencia mil veinte.', new Map(), PERMITIDOS).ok).toBe(true);
+    expect(revisarRespuesta('Es la referencia mil treinta.', new Map(), PERMITIDOS).ok).toBe(false);
+    expect(revisarRespuesta('Hay veinticinco milímetros de rosca.', new Map(), PERMITIDOS).ok).toBe(true);
+    expect(valorEnPalabras(['ciento', 'cincuenta', 'mil'])).toBe(150000);
+    expect(valorEnPalabras(['treinta', 'y', 'dos'])).toBe(32);
+  });
+
+  it('sin número detrás, la palabra de precio no frena', () => {
+    expect(revisarRespuesta('El precio de lista te lo da tu asesor.', new Map(), PERMITIDOS).ok).toBe(true);
   });
 });
