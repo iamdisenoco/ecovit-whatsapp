@@ -101,15 +101,8 @@ function validateOne(step: StepLike, path: string, issues: ValidationIssue[]): v
       }
       break
     case 'create_deal':
-      if (!nonEmpty(c.pipeline_id)) {
-        issues.push({ path: `${path}.pipeline_id`, message: t('pipelineRequired') })
-      }
-      if (!nonEmpty(c.stage_id)) {
-        issues.push({ path: `${path}.stage_id`, message: t('stageRequired') })
-      }
-      if (!nonEmpty(c.title)) {
-        issues.push({ path: `${path}.title`, message: t('titleRequired') })
-      }
+      // ECOVIT: sin `deals` (TODO bloque 3: oportunidades de ECOVIT).
+      issues.push({ path: `${path}.step_type`, message: 'El paso «crear negocio» ya no existe.' })
       break
     case 'wait':
       if (typeof c.amount !== 'number' || !Number.isFinite(c.amount) || c.amount <= 0) {

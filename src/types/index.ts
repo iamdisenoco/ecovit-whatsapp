@@ -370,48 +370,8 @@ export interface MessageTemplate {
   created_at: string;
 }
 
-export interface Pipeline {
-  id: string;
-  user_id: string;
-  name: string;
-  created_at: string;
-}
-
-export interface PipelineStage {
-  id: string;
-  pipeline_id: string;
-  name: string;
-  position: number;
-  color: string;
-  created_at: string;
-}
-
-export type DealStatus = 'open' | 'won' | 'lost';
-
-export interface Deal {
-  id: string;
-  user_id: string;
-  pipeline_id: string;
-  stage_id: string;
-  /**
-   * Nullable after migration 004 — becomes NULL when the referenced
-   * contact is deleted (ON DELETE SET NULL). History preserved.
-   */
-  contact_id: string | null;
-  conversation_id?: string;
-  assigned_to?: string;
-  title: string;
-  value: number;
-  currency?: string;
-  notes?: string;
-  expected_close_date?: string;
-  status?: DealStatus;
-  created_at: string;
-  updated_at?: string;
-  contact?: Contact;
-  stage?: PipelineStage;
-  assignee?: Profile;
-}
+// ECOVIT: sin `Pipeline`, `PipelineStage` ni `Deal`: la base no tiene esas tablas.
+// TODO bloque 3: oportunidades de ECOVIT.
 
 export type BroadcastStatus = 'draft' | 'scheduled' | 'sending' | 'sent' | 'failed';
 export type RecipientStatus = 'pending' | 'sent' | 'delivered' | 'read' | 'replied' | 'failed';

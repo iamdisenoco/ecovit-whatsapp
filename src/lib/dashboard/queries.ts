@@ -8,7 +8,8 @@ const BROADCAST_STATUS_KEYS = new Set(['draft', 'scheduled', 'sending', 'sent', 
 type DB = SupabaseClient
 
 export async function loadActivity(db: DB, limit = 20): Promise<ActivityItem[]> {
-  const [msgs, contacts, deals, broadcasts, autoLogs] = await Promise.all([
+  // ECOVIT: sin `deals` (TODO bloque 3: oportunidades de ECOVIT).
+  const [msgs, contacts, broadcasts, autoLogs] = await Promise.all([
     db
       .from('messages')
       .select('id, content_text, sender_type, created_at, conversation_id, conversations(contact_id, contacts(name, phone))')
@@ -19,11 +20,6 @@ export async function loadActivity(db: DB, limit = 20): Promise<ActivityItem[]> 
       .from('contacts')
       .select('id, name, phone, created_at')
       .order('created_at', { ascending: false })
-      .limit(10),
-    db
-      .from('deals')
-      .select('id, title, updated_at, stage:pipeline_stages(name)')
-      .order('updated_at', { ascending: false })
       .limit(10),
     db
       .from('broadcasts')
@@ -80,24 +76,6 @@ export async function loadActivity(db: DB, limit = 20): Promise<ActivityItem[]> 
       text: t('newContact', { name: c.name || c.phone }),
       at: c.created_at,
       href: '/contacts',
-    })
-  }
-
-  for (const d of (deals.data ?? []) as unknown as Array<{
-    id: string
-    title: string
-    updated_at: string
-    stage: { name: string }[] | { name: string } | null
-  }>) {
-    const stage = Array.isArray(d.stage) ? d.stage[0] : d.stage
-    items.push({
-      id: `deal-${d.id}`,
-      kind: 'deal',
-      text: stage?.name
-        ? t('dealInStage', { title: d.title, stage: stage.name })
-        : t('dealUpdated', { title: d.title }),
-      at: d.updated_at,
-      href: '/pipelines',
     })
   }
 

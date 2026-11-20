@@ -109,15 +109,11 @@ describe("validateStepsForActivation", () => {
     ]);
   });
 
-  it("flags create_deal when required fields are missing", () => {
+  it("rechaza create_deal: la base de ECOVIT no tiene deals", () => {
     const issues = validateStepsForActivation([
-      { step_type: "create_deal", step_config: {} },
+      { step_type: "create_deal", step_config: { pipeline_id: "p", stage_id: "s", title: "t" } },
     ]);
-    expect(issues.map((i) => i.path).sort()).toEqual([
-      "steps[0].pipeline_id",
-      "steps[0].stage_id",
-      "steps[0].title",
-    ]);
+    expect(issues.map((i) => i.path)).toEqual(["steps[0].step_type"]);
   });
 
   it("validates send_buttons / send_list interactive payloads", () => {

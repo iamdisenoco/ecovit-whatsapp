@@ -2,7 +2,6 @@
 
 import { useFormatter, useTranslations } from 'next-intl'
 
-import { formatCurrency } from '@/lib/currency'
 import {
   compare,
   ratio,
@@ -15,10 +14,8 @@ import { useFormatDuration } from './use-format-duration'
 
 export function KpiRow({
   data,
-  currency,
 }: {
   data: DashboardOverview | null
-  currency: string
 }) {
   const t = useTranslations('Dashboard.overview.kpi')
   const format = useFormatter()
@@ -26,8 +23,8 @@ export function KpiRow({
 
   if (!data) {
     return (
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        {Array.from({ length: 5 }).map((_, i) => (
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
           <KpiTileSkeleton key={i} />
         ))}
       </div>
@@ -41,7 +38,9 @@ export function KpiRow({
   const percent = (v: number) => format.number(v, { style: 'percent', maximumFractionDigits: 0 })
 
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+    // ECOVIT: sin el indicador «negocios ganados»: la base no tiene `deals`.
+    // TODO bloque 3: oportunidades de ECOVIT.
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <KpiTile
         title={t('newConversations')}
         info={t('newConversationsInfo')}
@@ -65,15 +64,6 @@ export function KpiRow({
         change={compare(kpis.resolved, kpis.resolvedPrevious)}
         comparisonLabel={comparisonLabel}
         footer={<Sparkline values={seriesValues(volume.series, 'resolved')} />}
-      />
-      <KpiTile
-        title={t('dealsWon')}
-        info={t('dealsWonInfo')}
-        value={format.number(kpis.dealsWon)}
-        unit={formatCurrency(kpis.dealsWonValue, currency)}
-        change={compare(kpis.dealsWon, kpis.dealsWonPrevious)}
-        comparisonLabel={comparisonLabel}
-        footer={<Sparkline values={seriesValues(volume.series, 'dealsWon')} />}
       />
       <KpiTile
         title={t('readRate')}
