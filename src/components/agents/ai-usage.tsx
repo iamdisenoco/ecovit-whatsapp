@@ -305,7 +305,7 @@ function GastoClaude({
           <p className="mb-2 text-xs font-medium text-muted-foreground">Chats que más gastaron</p>
           <ul className="divide-y divide-border rounded-md border border-border">
             {gasto.por_chat.map((c) => (
-              <li key={c.conversation_id} className="flex items-center justify-between px-3 py-2 text-sm">
+              <li key={c.conversation_id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
                 <a href={`/inbox?c=${c.conversation_id}`} className="min-w-0 truncate text-primary hover:underline">
                   {c.cliente ? `Chat con ${c.cliente}` : 'Ver chat'}
                 </a>
