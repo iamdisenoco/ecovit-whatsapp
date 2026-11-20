@@ -104,14 +104,50 @@ function comoCantidad(texto: string, inicio: number, fin: number): boolean {
   return CANTIDAD_DESPUES.test(texto.slice(fin)) || CANTIDAD_ANTES.test(texto.slice(0, inicio));
 }
 
+/** En el mensaje del CLIENTE, el número es una cantidad pedida: «¿tienen 20?», «necesito 20». */
+const PIDE_CANTIDAD =
+  /(?<!\p{L})(?:tienen|tienes|tiene|hay|necesito|necesitamos|necesita|quiero|queremos|requiero|requerimos|pido|pedimos|llevo|llevamos|compro|compramos|cotizar|cotizame|cotízame)\s+(?:unos\s+|unas\s+|como\s+|de\s+)?$/iu;
+/** En el mensaje del cliente, el número está en una frase de precio: no da permiso. */
+const PRECIO_ANTES =
+  /(?<!\p{L})(?:en|a|por|cu[aá]nto|precio|vale|valen|cuesta|cuestan|valor|dejas|deja|dejan|sale|salen|queda|quedan|pago|pagar|ofrezco)\s+(?:los\s+|las\s+|el\s+|unos\s+|solo\s+)?$|[$€]\s*$/iu;
+const PRECIO_DESPUES = /^\s*(?:mil|k|millones?|mill[oó]n|pesos?|lucas?|lukas?|palos?|d[oó]lares?|euros?|cada|c\s*\/\s*u|la\s+unidad)(?!\p{L})/iu;
+
+/**
+ * Los números que el cliente pidió COMO CANTIDAD, y nunca dentro de una frase
+ * de precio. Si el mismo número aparece una vez como precio («¿me lo dejas en
+ * 120?»), no da permiso aunque en otro lado parezca cantidad.
+ */
+export function cantidadesDelCliente(delCliente: string): Set<string> {
+  const cantidad = new Set<string>();
+  const precio = new Set<string>();
+  for (const m of delCliente.matchAll(DIGITOS)) {
+    const n = m[0];
+    const inicio = m.index ?? 0;
+    const antes = delCliente.slice(0, inicio);
+    const despues = delCliente.slice(inicio + n.length);
+    const variantes = normalizarNumero(n);
+    if (PRECIO_ANTES.test(antes) || PRECIO_DESPUES.test(despues)) {
+      for (const v of variantes) precio.add(v);
+    } else if (PIDE_CANTIDAD.test(antes) || CANTIDAD_DESPUES.test(despues)) {
+      for (const v of variantes) cantidad.add(v);
+    }
+  }
+  for (const v of precio) cantidad.delete(v);
+  return cantidad;
+}
+
+/** Acuerdos de precio: frenan siempre, haya o no número permitido. */
+const ACUERDO_PRECIO = /(?<!\p{L})(?:a|por|en)\s+ese\s+(?:valor|precio)(?!\p{L})/iu;
+
 export function numeroNoPermitido(texto: string, permitidos: string, delCliente = ''): string | null {
   if (MONEDA.test(texto)) return 'moneda o símbolo de plata';
   if (PORCENTAJE.test(texto)) return 'porcentaje';
   if (DESCUENTO.test(texto)) return 'descuento';
   if (MAGNITUD.test(texto)) return 'cifra con magnitud';
+  if (ACUERDO_PRECIO.test(texto)) return 'acuerdo de precio';
 
   const blanca = listaBlanca(permitidos);
-  const cliente = listaBlanca(delCliente);
+  const cliente = { numeros: cantidadesDelCliente(delCliente) };
   for (const m of texto.matchAll(DIGITOS)) {
     const n = m[0];
     const variantes = normalizarNumero(n);
@@ -203,12 +239,15 @@ export function valorEnPalabras(palabras: string[]): number | null {
 
 const ROMANO = /^[ivxlcdm]+$/;
 /** Lo que puede ir entre la frase y el número: «el precio ES DE 420», «cuesta UNOS 950». */
-const RELLENO = new Set(['es', 'de', 'unos', 'unas', 'como', 'solo', 'apenas', 'mas', 'más', 'o', 'menos', 'aprox', 'aproximadamente', 'eso', 'lo', 'te', 'en', 'a']);
+const RELLENO = new Set(['es', 'de', 'unos', 'unas', 'como', 'solo', 'apenas', 'mas', 'más', 'o', 'menos', 'aprox', 'aproximadamente', 'eso', 'lo', 'te', 'en', 'a', 'los', 'las', 'el', 'la', 'entonces', 'pues']);
 const FRASES_PRECIO: string[][] = [
   ['te', 'lo', 'dejo', 'en'], ['te', 'lo', 'dejo', 'a'], ['te', 'lo', 'dejamos', 'en'], ['te', 'lo', 'dejamos', 'a'],
   ['te', 'queda', 'en'], ['te', 'queda', 'a'], ['te', 'sale', 'en'], ['te', 'sale', 'a'],
   ['queda', 'en'], ['sale', 'en'], ['quedan', 'en'], ['salen', 'en'],
   ['el', 'valor', 'es'], ['valor'], ['vale'], ['valen'], ['cuesta'], ['cuestan'], ['precio'],
+  // Acuerdos (segunda validación): «quedamos en los 120», «te dejo los 120»,
+  // «de una, 120», «listo, 120», «dejamos 120».
+  ['quedamos', 'en'], ['quedamos'], ['dejo'], ['dejamos'], ['de', 'acuerdo'], ['de', 'una'], ['listo'],
 ];
 const POR_UNIDAD: string[][] = [['la', 'unidad'], ['c', 'u'], ['cada', 'uno'], ['cada', 'una'], ['por', 'unidad']];
 
@@ -255,13 +294,22 @@ export function revisarRespuesta(
   consultadas: Map<string, ReferenciaCatalogo>,
   permitidos = '',
   /** Lo que escribió el cliente: sus números solo valen como cantidad. */
-  delCliente = ''
+  delCliente = '',
+  /**
+   * Códigos de referencia que el catálogo confirmó en turnos anteriores de la
+   * conversación. Valen como código entero («SR-3300»), no sus cifras sueltas.
+   */
+  codigosPrevios: string[] = []
 ): Revision {
   const limpio = texto.trim();
   if (!limpio) return { ok: false, motivo: 'respuesta vacía' };
 
   // Lo que escribió el modelo, sin las marcas de precio (esas las cambia el código).
-  const suyo = limpio.replace(MARCA, ' ');
+  let suyo = limpio.replace(MARCA, ' ');
+  for (const c of codigosPrevios) {
+    const seguro = c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    suyo = suyo.replace(new RegExp(`(?<![\\p{L}\\d])${seguro}(?![\\p{L}\\d])`, 'giu'), ' ');
+  }
   const problema = numeroNoPermitido(suyo, permitidos, delCliente);
   if (problema) return { ok: false, motivo: problema };
 
