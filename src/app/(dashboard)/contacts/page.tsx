@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { toast } from 'sonner';
-import type { Contact, Tag, ContactTag } from '@/types';
+import type { Contact, Tag } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -16,32 +16,12 @@ import {
 } from '@/components/ui/table';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-} from '@/components/ui/dropdown-menu';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from '@/components/ui/dialog';
-import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
 import {
   Search,
-  Plus,
-  Upload,
-  MoreHorizontal,
-  Pencil,
-  Trash2,
   Loader2,
   Users,
   ChevronLeft,
@@ -50,12 +30,10 @@ import {
   Filter,
   X,
 } from 'lucide-react';
-import { ContactForm } from '@/components/contacts/contact-form';
 import { ContactDetailView } from '@/components/contacts/contact-detail-view';
-import { ImportModal } from '@/components/contacts/import-modal';
 import { CustomFieldsManager } from '@/components/contacts/custom-fields-manager';
 import { useCan } from '@/hooks/use-can';
-import { GatedButton } from '@/components/ui/gated-button';
+import { SoloConPermiso } from '@/components/auth/solo-con-permiso';
 import { useLocale, useTranslations } from 'next-intl';
 import {
   contactSearchFilter,
@@ -69,12 +47,24 @@ interface ContactWithTags extends Contact {
   tags?: Tag[];
 }
 
+// ECOVIT (bloque 3): esta pantalla queda para la dirección (etiquetas y
+// campos para los envíos masivos). Sin alta, importación, edición del
+// teléfono ni borrado: los contactos los crea el webhook con la clave de
+// servicio, la base no deja a `authenticated` insertar ni cambiar `phone`, y
+// los contactos de verdad viven en Clientes de ECOVIT. El vendedor ve el
+// número y su cliente en el panel del chat.
 export default function ContactsPage() {
+  return (
+    <SoloConPermiso accion="view-contacts-screen" destino="/inbox">
+      <ContactsScreen />
+    </SoloConPermiso>
+  );
+}
+
+function ContactsScreen() {
   const t = useTranslations('Contacts.page');
   const locale = useLocale();
-  const tGate = useTranslations('GatedButton');
   const supabase = createClient();
-  const canEdit = useCan('send-messages');
   const canEditSettings = useCan('edit-settings');
 
   const [contacts, setContacts] = useState<ContactWithTags[]>([]);
@@ -86,20 +76,11 @@ export default function ContactsPage() {
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
 
   // Modals
-  const [formOpen, setFormOpen] = useState(false);
-  const [editContact, setEditContact] = useState<Contact | null>(null);
-  const [editContactTags, setEditContactTags] = useState<ContactTag[]>([]);
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailContactId, setDetailContactId] = useState<string | null>(null);
-  const [importOpen, setImportOpen] = useState(false);
   const [customFieldsOpen, setCustomFieldsOpen] = useState(false);
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<Contact | null>(null);
-  const [deleting, setDeleting] = useState(false);
 
   // Bulk selection (page-scoped — only the loaded rows are selectable)
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   // All tags for display
   const [tagsMap, setTagsMap] = useState<Record<string, Tag>>({});
@@ -128,10 +109,6 @@ export default function ContactsPage() {
   const fetchContacts = useCallback(async () => {
     const seq = ++fetchSeq.current;
     setLoading(true);
-    // The visible rows are about to change — drop any selection that
-    // referred to the old page/search results so the bulk bar can't
-    // act on rows the user can no longer see.
-    setSelected(new Set());
 
     const from = page * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
@@ -243,95 +220,9 @@ export default function ContactsPage() {
     fetchContacts();
   }, [fetchContacts]);
 
-  function openAddForm() {
-    setEditContact(null);
-    setEditContactTags([]);
-    setFormOpen(true);
-  }
-
-  async function openEditForm(contact: Contact) {
-    const { data } = await supabase
-      .from('contact_tags')
-      .select('*')
-      .eq('contact_id', contact.id);
-    setEditContact(contact);
-    setEditContactTags(data ?? []);
-    setFormOpen(true);
-  }
-
   function openDetail(contactId: string) {
     setDetailContactId(contactId);
     setDetailOpen(true);
-  }
-
-  function confirmDelete(contact: Contact) {
-    setDeleteTarget(contact);
-    setDeleteConfirmOpen(true);
-  }
-
-  async function handleDelete() {
-    if (!deleteTarget) return;
-    setDeleting(true);
-
-    const { error } = await supabase
-      .from('contacts')
-      .delete()
-      .eq('id', deleteTarget.id);
-
-    if (error) {
-      toast.error(t('toastFailedDelete'));
-    } else {
-      toast.success(t('toastDeleted'));
-      fetchContacts();
-    }
-
-    setDeleting(false);
-    setDeleteConfirmOpen(false);
-    setDeleteTarget(null);
-  }
-
-  const allOnPageSelected =
-    contacts.length > 0 && contacts.every((c) => selected.has(c.id));
-  const someOnPageSelected = contacts.some((c) => selected.has(c.id));
-
-  function toggleSelectAll() {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (allOnPageSelected) {
-        contacts.forEach((c) => next.delete(c.id));
-      } else {
-        contacts.forEach((c) => next.add(c.id));
-      }
-      return next;
-    });
-  }
-
-  function toggleSelect(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  async function handleBulkDelete() {
-    const ids = [...selected];
-    if (ids.length === 0) return;
-    setDeleting(true);
-
-    const { error } = await supabase.from('contacts').delete().in('id', ids);
-
-    if (error) {
-      toast.error(t('toastBulkFailedDelete'));
-    } else {
-      toast.success(t('toastBulkDeleted', { count: ids.length }));
-      setSelected(new Set());
-      fetchContacts();
-    }
-
-    setDeleting(false);
-    setBulkDeleteOpen(false);
   }
 
   const totalPages = Math.ceil(totalCount / PAGE_SIZE);
@@ -380,25 +271,6 @@ export default function ContactsPage() {
               {t('customFieldsBtn')}
             </Button>
           )}
-          <GatedButton
-            variant="outline"
-            canAct={canEdit}
-            gateReason={tGate('reasons.addOrImportContacts')}
-            onClick={() => setImportOpen(true)}
-            className="border-border text-muted-foreground hover:bg-muted"
-          >
-            <Upload className="size-4" />
-            {t('importBtn')}
-          </GatedButton>
-          <GatedButton
-            canAct={canEdit}
-            gateReason={tGate('reasons.addOrImportContacts')}
-            onClick={openAddForm}
-            className="bg-primary hover:bg-primary/90 text-primary-foreground"
-          >
-            <Plus className="size-4" />
-            {t('addContactBtn')}
-          </GatedButton>
         </div>
       </div>
 
@@ -518,62 +390,24 @@ export default function ContactsPage() {
         )}
       </div>
 
-      {/* Bulk action bar */}
-      {selected.size > 0 && (
-        <div className="flex items-center justify-between gap-4 rounded-lg border border-border bg-muted/40 px-4 py-2">
-          <p className="text-sm text-foreground">
-            {t('selectedCount', { count: selected.size })}
-          </p>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setSelected(new Set())}
-              className="text-muted-foreground hover:text-foreground"
-            >
-              {t('clearSelection')}
-            </Button>
-            <GatedButton
-              variant="destructive"
-              size="sm"
-              canAct={canEdit}
-              gateReason={tGate('reasons.deleteContacts')}
-              onClick={() => setBulkDeleteOpen(true)}
-            >
-              <Trash2 className="size-4" />
-              {t('deleteSelected')}
-            </GatedButton>
-          </div>
-        </div>
-      )}
 
       {/* Table */}
       <div className="rounded-lg border border-border overflow-hidden">
         <Table>
           <TableHeader>
             <TableRow className="border-border hover:bg-transparent">
-              <TableHead className="w-10">
-                <Checkbox
-                  checked={allOnPageSelected}
-                  indeterminate={!allOnPageSelected && someOnPageSelected}
-                  onCheckedChange={toggleSelectAll}
-                  disabled={contacts.length === 0}
-                  aria-label={t('selectAllOnPage')}
-                />
-              </TableHead>
               <TableHead className="text-muted-foreground">{t('tableColumns.name')}</TableHead>
               <TableHead className="text-muted-foreground">{t('tableColumns.phone')}</TableHead>
               <TableHead className="text-muted-foreground hidden md:table-cell">{t('tableColumns.email')}</TableHead>
               <TableHead className="text-muted-foreground hidden lg:table-cell">{t('tableColumns.company')}</TableHead>
               <TableHead className="text-muted-foreground hidden md:table-cell">{t('tableColumns.tags')}</TableHead>
               <TableHead className="text-muted-foreground hidden lg:table-cell">{t('tableColumns.createdAt')}</TableHead>
-              <TableHead className="text-muted-foreground w-12" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               <TableRow className="border-border">
-                <TableCell colSpan={8} className="text-center py-12">
+                <TableCell colSpan={6} className="text-center py-12">
                   <div className="flex flex-col items-center gap-2">
                     <Loader2 className="size-6 animate-spin text-primary" />
                     <p className="text-sm text-muted-foreground">{t('loading')}</p>
@@ -582,7 +416,7 @@ export default function ContactsPage() {
               </TableRow>
             ) : contacts.length === 0 ? (
               <TableRow className="border-border">
-                <TableCell colSpan={8} className="text-center py-12">
+                <TableCell colSpan={6} className="text-center py-12">
                   <div className="flex flex-col items-center gap-2">
                     <Users className="size-8 text-muted-foreground" />
                     <p className="text-sm text-muted-foreground">
@@ -590,19 +424,6 @@ export default function ContactsPage() {
                         ? t('noContactsMatch')
                         : t('noContactsYet')}
                     </p>
-                    {!hasActiveFilters && (
-                      <GatedButton
-                        canAct={canEdit}
-                        gateReason={tGate('reasons.addOrImportContacts')}
-                        variant="outline"
-                        size="sm"
-                        onClick={openAddForm}
-                        className="mt-2 border-border text-muted-foreground hover:bg-muted"
-                      >
-                        <Plus className="size-3.5" />
-                        {t('addFirstContact')}
-                      </GatedButton>
-                    )}
                   </div>
                 </TableCell>
               </TableRow>
@@ -613,13 +434,6 @@ export default function ContactsPage() {
                   className="border-border hover:bg-muted/50 cursor-pointer"
                   onClick={() => openDetail(contact.id)}
                 >
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <Checkbox
-                      checked={selected.has(contact.id)}
-                      onCheckedChange={() => toggleSelect(contact.id)}
-                      aria-label={t('selectContact', { name: contact.name || contact.phone })}
-                    />
-                  </TableCell>
                   <TableCell className="text-foreground font-medium">
                     {contact.name || <span className="text-muted-foreground italic">{t('unnamed')}</span>}
                   </TableCell>
@@ -664,48 +478,6 @@ export default function ContactsPage() {
                       year: 'numeric',
                     })}
                   </TableCell>
-                  <TableCell>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger
-                        render={
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            className="text-muted-foreground hover:text-foreground"
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                        }
-                      >
-                        <MoreHorizontal className="size-4" />
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent
-                        align="end"
-                        className="bg-popover border-border"
-                      >
-                        <DropdownMenuItem
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openEditForm(contact);
-                          }}
-                          className="text-popover-foreground focus:bg-muted focus:text-foreground"
-                        >
-                          <Pencil className="size-4" />
-                          {t('editAction')}
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator className="bg-border" />
-                        <DropdownMenuItem
-                          variant="destructive"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            confirmDelete(contact);
-                          }}
-                        >
-                          <Trash2 className="size-4" />
-                          {t('deleteAction')}
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
                 </TableRow>
               ))
             )}
@@ -749,35 +521,12 @@ export default function ContactsPage() {
         </div>
       )}
 
-      {/* Contact Form Dialog */}
-      <ContactForm
-        open={formOpen}
-        onOpenChange={setFormOpen}
-        contact={editContact}
-        contactTags={editContactTags}
-        onSaved={() => {
-          fetchContacts();
-          fetchTags();
-        }}
-        onViewExisting={(id) => {
-          setFormOpen(false);
-          openDetail(id);
-        }}
-      />
-
       {/* Contact Detail Sheet */}
       <ContactDetailView
         open={detailOpen}
         onOpenChange={setDetailOpen}
         contactId={detailContactId}
         onUpdated={fetchContacts}
-      />
-
-      {/* Import Modal */}
-      <ImportModal
-        open={importOpen}
-        onOpenChange={setImportOpen}
-        onImported={fetchContacts}
       />
 
       {/* Custom Fields Manager (admin+) */}
@@ -788,65 +537,7 @@ export default function ContactsPage() {
         />
       )}
 
-      {/* Delete Confirmation */}
-      <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
-        <DialogContent className="bg-popover border-border text-popover-foreground sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="text-popover-foreground">{t('deleteContactTitle')}</DialogTitle>
-            <DialogDescription className="text-muted-foreground">
-              {t('deleteContactDesc', { name: deleteTarget?.name || deleteTarget?.phone || '' })}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="bg-popover border-border">
-            <Button
-              variant="outline"
-              onClick={() => setDeleteConfirmOpen(false)}
-              className="border-border text-muted-foreground hover:bg-muted"
-            >
-              {t('cancel')}
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDelete}
-              disabled={deleting}
-            >
-              {deleting && <Loader2 className="size-4 animate-spin" />}
-              {t('deleteBtn')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
-      {/* Bulk Delete Confirmation */}
-      <Dialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
-        <DialogContent className="bg-popover border-border text-popover-foreground sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="text-popover-foreground">
-              {t('deleteBulkTitle')}
-            </DialogTitle>
-            <DialogDescription className="text-muted-foreground">
-              {t('deleteBulkDesc', { count: selected.size })}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="bg-popover border-border">
-            <Button
-              variant="outline"
-              onClick={() => setBulkDeleteOpen(false)}
-              className="border-border text-muted-foreground hover:bg-muted"
-            >
-              {t('cancel')}
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleBulkDelete}
-              disabled={deleting}
-            >
-              {deleting && <Loader2 className="size-4 animate-spin" />}
-              {t('deleteBtn')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

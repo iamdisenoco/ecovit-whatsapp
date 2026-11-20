@@ -41,7 +41,6 @@ import {
 import { useLocale, useTranslations } from 'next-intl';
 import { planCustomValueWrites } from '@/lib/contacts/custom-value-writes';
 import { contactHandle } from '@/lib/whatsapp/wa-identity';
-import { parseInternationalPhone } from '@/lib/whatsapp/phone-utils';
 
 interface ContactDetailViewProps {
   open: boolean;
@@ -184,27 +183,16 @@ export function ContactDetailView({
   }
 
   async function saveDetails() {
-    if (!contactId || !editPhone.trim()) {
-      toast.error(t('toastPhoneRequired'));
-      return;
-    }
+    if (!contactId) return;
 
-    // Same rule as the create form: a changed number must start with `+`
-    // and a country code (issue #586). Unchanged numbers — including the
-    // digits-only form the inbound webhook stores — are left alone so a
-    // name/email edit is never blocked by the phone field.
-    const phoneChanged = editPhone.trim() !== (contact?.phone ?? '');
-    if (phoneChanged && !parseInternationalPhone(editPhone)) {
-      toast.error(t('toastPhoneNeedsCountryCode'));
-      return;
-    }
-
+    // ECOVIT (bloque 3): el teléfono no se edita desde aquí, ni la dirección.
+    // Cambiarlo re-enlaza el chat a otro cliente de ECOVIT, y la base ya no
+    // le da a `authenticated` el `update (phone)`. Lo escribe el webhook.
     setSavingDetails(true);
     const { error } = await supabase
       .from('contacts')
       .update({
         name: editName.trim() || null,
-        phone: editPhone.trim(),
         email: editEmail.trim() || null,
         company: editCompany.trim() || null,
         updated_at: new Date().toISOString(),
@@ -486,13 +474,14 @@ export function ContactDetailView({
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-muted-foreground text-xs">
-                      {t('phone')} <span className="text-red-400">*</span>
-                    </Label>
+                    <Label className="text-muted-foreground text-xs">{t('phone')}</Label>
+                    {/* ECOVIT: solo lectura. El número lo pone el webhook. */}
                     <Input
                       value={editPhone}
-                      onChange={(e) => setEditPhone(e.target.value)}
-                      className="bg-muted border-border text-foreground h-8 text-sm"
+                      readOnly
+                      aria-readonly
+                      title="El número lo pone WhatsApp; no se edita aquí"
+                      className="bg-muted border-border text-muted-foreground h-8 text-sm"
                     />
                   </div>
                   <div className="space-y-1.5">
@@ -678,8 +667,9 @@ export function ContactDetailView({
                 )}
               </TabsContent>
 
-              {/* ECOVIT: sin la pestaña de negocios (no hay `deals`).
-                  TODO bloque 3: oportunidades de ECOVIT. */}
+              {/* ECOVIT: sin la pestaña de negocios (no hay `deals`). El
+                  cliente y sus oportunidades de ECOVIT van en el panel del
+                  chat (bloque 3, `PanelEcovit`). */}
             </Tabs>
           </div>
         )}

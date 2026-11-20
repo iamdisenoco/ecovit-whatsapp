@@ -263,32 +263,23 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       if (key) byKey.set(key, c);
     }
 
-    // Insert only missing contacts, in one batch per 200 rows (PostgREST
-    // has a default payload cap — 200 keeps individual requests small).
+    // ECOVIT (bloque 3): `authenticated` ya no inserta en `contacts`; los
+    // crea solo el webhook, con la clave de servicio, cuando el número
+    // escribe. Un número del CSV que nunca escribió no se puede crear desde
+    // aquí, y mandar a los demás callando a esos sería un envío distinto del
+    // que se pidió: se detiene y se dice cuáles son.
     const missing = keys
       .filter((k) => !byKey.has(k))
-      .map((k) => uniqueByKey.get(k)!)
-      .map((row) => ({
-        user_id: user.id,
-        account_id: accountId,
-        phone: row.phone,
-        name: row.name ?? null,
-      }));
-
-    const INSERT_CHUNK = 200;
-    for (let i = 0; i < missing.length; i += INSERT_CHUNK) {
-      const chunk = missing.slice(i, i + INSERT_CHUNK);
-      const { data: inserted, error: insertErr } = await supabase
-        .from('contacts')
-        .insert(chunk)
-        .select();
-      if (insertErr) {
-        throw new Error(t('createCsvContactsFailed', { error: insertErr.message }));
-      }
-      for (const c of (inserted ?? []) as Contact[]) {
-        const key = normalizeKey(c.phone ?? '');
-        if (key) byKey.set(key, c);
-      }
+      .map((k) => uniqueByKey.get(k)!.phone);
+    if (missing.length > 0) {
+      const muestra = missing.slice(0, 5).join(', ');
+      const resto = missing.length > 5 ? ` y ${missing.length - 5} más` : '';
+      throw new Error(
+        `${missing.length === 1 ? 'Un número' : `${missing.length} números`} del CSV no ` +
+          `${missing.length === 1 ? 'está' : 'están'} en los contactos de WhatsApp ` +
+          `(${muestra}${resto}). Los contactos se crean solos cuando el número escribe; ` +
+          `quítalos del CSV para enviar a los demás.`,
+      );
     }
 
     // Preserve input order so analytics roughly matches the CSV order.

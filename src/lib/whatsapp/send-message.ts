@@ -446,14 +446,15 @@ export async function sendMessageToConversation(
     throw new SendMessageError('meta_error', `Meta API error: ${message}`, 502);
   }
 
+  // ECOVIT (bloque 3): `contacts.phone` ya no se escribe con la sesión de la
+  // persona —cambiarlo re-enlaza el chat a otro cliente de ECOVIT—, y esta
+  // función solo la llama `/api/whatsapp/send`, con la sesión. Meta aceptó
+  // una variante del número: se anota en el registro y el contacto queda
+  // como lo dejó el webhook.
   if (hasValidPhone && workingPhone !== sanitizedPhone) {
-    console.log(
-      `[send-message] Auto-corrected contact phone: ${sanitizedPhone} → ${workingPhone}`
+    console.warn(
+      `[send-message] Meta aceptó ${workingPhone} para el contacto ${contact.id} (guardado: ${sanitizedPhone}); contacts.phone no se toca desde la sesión`
     );
-    await db
-      .from('contacts')
-      .update({ phone: workingPhone })
-      .eq('id', contact.id);
   }
 
   // Persist the sent message. Field names MUST match the messages
