@@ -3,9 +3,11 @@
 // lugar. La IA no los escribe ni los reescribe: los pone el código.
 //
 // Fuente: specs/MOD-03-whatsapp/cruce-hu28.md («Los textos fijos: una sola
-// lista») y, para la letra de T3 a T6 y T9, la §5 de la spec de HU-28 (rama
-// `claude/hu-28-asistente-spec`, 208f977), «tal como están» por la decisión 3
-// de la spec de MOD-03. T10 y T11 son nuevos de MOD-03 y NO tienen letra
+// lista»). La letra de T3 a T6 y T9 salió de la §5 de la spec de HU-28, pero
+// CAMBIÓ por decisión de Jon (20-nov, «Deja de poner tantas reglas de
+// seguridad»): los textos no le explican reglas ni seguridad al cliente; las
+// protecciones van en el código, sin que se vean. La letra vigente está en el
+// cruce. T10 y T11 son nuevos de MOD-03 y NO tienen letra
 // aprobada: van como borrador con `aprobado: false`, y el bot no los manda
 // hasta que Jon los apruebe (T11 además necesita el horario real de ECOVIT).
 // ============================================================
@@ -23,50 +25,53 @@ export const TEXTOS: Record<TextoFijo['id'], TextoFijo> = {
     id: 'T3',
     nombre: 'Paso con el asesor',
     plantilla:
-      'Listo, {asesor} ya tiene tu solicitud y te escribe para continuar. Lo de {condicion} queda pendiente de aprobación comercial.',
+      'Listo, {asesor} ya tiene tu solicitud y te escribe para continuar.',
     aprobado: true,
   },
   T4: {
     id: 'T4',
     nombre: 'Falta dato',
     plantilla:
-      'Ese dato no lo tengo confirmado y no te quiero dar uno equivocado. ¿Quieres que {asesor} te lo confirme?',
+      'Ese dato no lo tengo confirmado. Ya le pasé tu pregunta a {asesor}.',
     aprobado: true,
   },
   T5: {
     id: 'T5',
     nombre: 'No negocia',
     plantilla:
-      'Los descuentos y las condiciones especiales los define tu asesor con el equipo comercial. Ya le paso tu solicitud.',
+      'Eso lo revisa {asesor}. Ya tiene tu solicitud y te escribe.',
     aprobado: true,
   },
   T6: {
     id: 'T6',
     nombre: 'La IA no responde',
-    plantilla: 'En este momento no puedo responderte bien. Ya le avisé a tu asesor para que te escriba.',
+    plantilla: 'Ya le avisé a tu asesor para que te escriba.',
     aprobado: true,
   },
   T9: {
     id: 'T9',
     nombre: 'Precio de lista',
     plantilla:
-      'Precio de lista: {precio} por {unidad}, antes de IVA. Es orientativo y no es una cotización: tu asesor te envía la cotización formal con las condiciones de tu proyecto.',
+      'Precio de lista: {precio} por {unidad}, antes de IVA.',
     aprobado: true,
   },
   T10: {
     id: 'T10',
     nombre: 'Saludo',
     // BORRADOR: el cruce solo da el comienzo («Hola, le escribe el asistente de
-    // ECOVIT…») y pide decir que puede dar el precio de lista. Ojo: usa
-    // «usted» y los de HU-28 «tú»; lo decide Jon.
+    // ECOVIT…»). Va en «tú», como los demás, y sin explicar reglas (Jon, 20-nov).
     plantilla:
-      'Hola, le escribe el asistente de ECOVIT. Le puedo contar de nuestras referencias, si hay existencias y el precio de lista; las cotizaciones las hace su asesor.',
+      'Hola, te escribe el asistente de ECOVIT. ¿En qué te ayudo?',
     aprobado: false,
   },
   T11: {
     id: 'T11',
     nombre: 'Fuera de horario',
     // BORRADOR: falta el horario real de ECOVIT (lo dice Manuela).
+    // REQUISITO PARA APROBARLO: `textoAlPasar` (bot.ts) arma «T5 fuera de
+    // horario» cortando T5 con `.split('. ')[0]` y nombra dos veces al asesor.
+    // Antes de pasar `aprobado` a true hay que reemplazar ese corte por un texto
+    // propio y agregarle una prueba con T11 aprobado y HORARIO_ECOVIT definido.
     plantilla:
       'Ya le pasé tu solicitud a {asesor}. Estamos fuera de horario ({horario}); te escribe apenas empiece la jornada.',
     aprobado: false,
@@ -80,11 +85,6 @@ export const HORARIO_ECOVIT: { texto: string; abre: number; cierra: number; dias
 /** El nombre que va en T3/T4 cuando nadie tiene el chat (queda en «Esperan»). */
 export const ASESOR_SIN_NOMBRE = 'un asesor de ECOVIT';
 
-const CONDICION: Record<string, string> = {
-  descuento: 'descuento',
-  credito: 'crédito',
-  volumen: 'volumen',
-};
 
 function rellenar(plantilla: string, valores: Record<string, string>): string {
   return plantilla.replace(/\{(\w+)\}/g, (_, k: string) => valores[k] ?? `{${k}}`);
@@ -94,18 +94,16 @@ export function textoAprobado(id: TextoFijo['id']): boolean {
   return TEXTOS[id].aprobado;
 }
 
-/** T3. La segunda frase va solo si el paso fue por descuento, crédito o volumen. */
-export function t3PasoConAsesor(asesor: string, motivo: string): string {
-  const condicion = CONDICION[motivo];
-  if (condicion) return rellenar(TEXTOS.T3.plantilla, { asesor, condicion });
-  return TEXTOS.T3.plantilla.split(' Lo de {condicion}')[0].replace('{asesor}', asesor);
+/** T3. Sin explicar condiciones al cliente (Jon, 20-nov). */
+export function t3PasoConAsesor(asesor: string): string {
+  return rellenar(TEXTOS.T3.plantilla, { asesor });
 }
 
 export function t4FaltaDato(asesor: string): string {
   return rellenar(TEXTOS.T4.plantilla, { asesor });
 }
 
-export const t5NoNegocia = (): string => TEXTOS.T5.plantilla;
+export const t5NoNegocia = (asesor: string): string => rellenar(TEXTOS.T5.plantilla, { asesor });
 export const t6IaNoResponde = (): string => TEXTOS.T6.plantilla;
 
 /** Pesos colombianos: «$ 148.000», o con centavos si los hay. */

@@ -113,7 +113,7 @@ const T9_ENVIADO = new RegExp(
   'g'
 );
 export const MARCA_T9_HISTORIAL =
-  '[Precio de lista entregado al cliente correctamente por el sistema, con su aclaración. Ya está hecho: no se repite ni es un error.]';
+  '[Precio de lista entregado al cliente correctamente por el sistema. Ya está hecho: no se repite ni es un error.]';
 
 export function mensajesParaClaude(contexto: ChatMessage[]): MensajeClaude[] {
   const unidos = mergeConsecutive(
@@ -148,14 +148,15 @@ function resumenDe(contexto: ChatMessage[], prefijo: string): string {
 export function textoAlPasar(motivo: string, asesor: string, fuera: boolean): string {
   if (motivo === 'tope' || motivo === 'ia_caida') return t6IaNoResponde();
   if (motivo === 'sin_dato') return t4FaltaDato(asesor);
-  const t3 =
+  const t11 =
     fuera && textoAprobado('T11') && HORARIO_ECOVIT
       ? TEXTOS.T11.plantilla.replace('{asesor}', asesor).replace('{horario}', HORARIO_ECOVIT.texto)
-      : t3PasoConAsesor(asesor, motivo);
+      : null;
   if (motivo === 'descuento' || motivo === 'volumen' || motivo === 'credito') {
-    return `${t5NoNegocia()}\n\n${t3}`;
+    // Un solo mensaje: T5 ya dice que el asesor tiene la solicitud (Jon, 20-nov).
+    return t11 ? `${t5NoNegocia(asesor).split('. ')[0]}.\n\n${t11}` : t5NoNegocia(asesor);
   }
-  return t3;
+  return t11 ?? t3PasoConAsesor(asesor);
 }
 
 async function pasarAVendedor(
