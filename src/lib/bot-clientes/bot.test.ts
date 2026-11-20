@@ -189,7 +189,7 @@ describe('pasa a una persona', () => {
     expect(rpcs.find((x) => x.fn === 'pasar_a_vendedor_wa')?.args.p_motivo).toBe('sin_dato');
   });
 
-  it('descuento: T5 + T3 con el nombre del vendedor de la cartera y la condición', async () => {
+  it('descuento: solo T5, con el nombre del vendedor de la cartera y sin explicar la condición', async () => {
     respuestasClaude = [herramienta('pasar_a_vendedor', { motivo: 'descuento', resumen: 'Pide 15 % por 200 FX-1' })];
     await atenderConBot(deps(), 'c1');
     const p = rpcs.find((x) => x.fn === 'pasar_a_vendedor_wa');

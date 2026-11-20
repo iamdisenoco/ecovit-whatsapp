@@ -3,9 +3,11 @@
 // lugar. La IA no los escribe ni los reescribe: los pone el código.
 //
 // Fuente: specs/MOD-03-whatsapp/cruce-hu28.md («Los textos fijos: una sola
-// lista») y, para la letra de T3 a T6 y T9, la §5 de la spec de HU-28 (rama
-// `claude/hu-28-asistente-spec`, 208f977), «tal como están» por la decisión 3
-// de la spec de MOD-03. T10 y T11 son nuevos de MOD-03 y NO tienen letra
+// lista»). La letra de T3 a T6 y T9 salió de la §5 de la spec de HU-28, pero
+// CAMBIÓ por decisión de Jon (20-nov, «Deja de poner tantas reglas de
+// seguridad»): los textos no le explican reglas ni seguridad al cliente; las
+// protecciones van en el código, sin que se vean. La letra vigente está en el
+// cruce. T10 y T11 son nuevos de MOD-03 y NO tienen letra
 // aprobada: van como borrador con `aprobado: false`, y el bot no los manda
 // hasta que Jon los apruebe (T11 además necesita el horario real de ECOVIT).
 // ============================================================
@@ -66,6 +68,10 @@ export const TEXTOS: Record<TextoFijo['id'], TextoFijo> = {
     id: 'T11',
     nombre: 'Fuera de horario',
     // BORRADOR: falta el horario real de ECOVIT (lo dice Manuela).
+    // REQUISITO PARA APROBARLO: `textoAlPasar` (bot.ts) arma «T5 fuera de
+    // horario» cortando T5 con `.split('. ')[0]` y nombra dos veces al asesor.
+    // Antes de pasar `aprobado` a true hay que reemplazar ese corte por un texto
+    // propio y agregarle una prueba con T11 aprobado y HORARIO_ECOVIT definido.
     plantilla:
       'Ya le pasé tu solicitud a {asesor}. Estamos fuera de horario ({horario}); te escribe apenas empiece la jornada.',
     aprobado: false,
