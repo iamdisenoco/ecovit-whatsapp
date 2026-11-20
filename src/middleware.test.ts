@@ -172,3 +172,64 @@ describe("middleware — toda ruta del tablero pide sesión", () => {
     expect(new URL(res.headers.get("location")!).pathname).toBe("/ingresar");
   });
 });
+
+describe("middleware — sin las variables de Supabase no se cae", () => {
+  beforeEach(() => {
+    delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+    delete process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+    delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("una pantalla va a /sin-sesion", async () => {
+    const res = await middleware(new NextRequest("https://wa.ecovit.test/inbox"));
+    expect(res.status).toBe(307);
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/sin-sesion");
+  });
+
+  it("una API responde 503", async () => {
+    const res = await middleware(new NextRequest("https://wa.ecovit.test/api/ai/usage"));
+    expect(res.status).toBe(503);
+  });
+
+  it("/sin-sesion se muestra igual", async () => {
+    const res = await middleware(new NextRequest("https://wa.ecovit.test/sin-sesion"));
+    expect(res.headers.get("x-middleware-next")).toBe("1");
+  });
+});
+
+describe("middleware — modo muestra (NEXT_PUBLIC_MODO_MUESTRA=1)", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("prendido: las pantallas pasan sin mirar la sesión, aun sin Supabase", async () => {
+    vi.stubEnv("NEXT_PUBLIC_MODO_MUESTRA", "1");
+    delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+    for (const ruta of ["/muestra", "/inbox", "/agents"]) {
+      const res = await middleware(new NextRequest(`https://demo.test${ruta}`));
+      expect(res.headers.get("x-middleware-next")).toBe("1");
+    }
+  });
+
+  it("prendido: las API dan 404 (la demostración no las usa)", async () => {
+    vi.stubEnv("NEXT_PUBLIC_MODO_MUESTRA", "1");
+    const res = await middleware(new NextRequest("https://demo.test/api/whatsapp/send"));
+    expect(res.status).toBe(404);
+  });
+
+  it("con otro valor que no sea «1» sigue apagado: la bandeja pide sesión", async () => {
+    vi.stubEnv("NEXT_PUBLIC_MODO_MUESTRA", "true");
+    const res = await middleware(new NextRequest("https://wa.ecovit.test/inbox"));
+    expect(res.status).toBe(307);
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/ingresar");
+  });
+
+  it("apagado: /muestra pasa a la página, que da 404 (no redirige)", async () => {
+    const res = await middleware(new NextRequest("https://wa.ecovit.test/muestra"));
+    expect(res.headers.get("x-middleware-next")).toBe("1");
+  });
+
+  it("apagado: /muestras (otro segmento) sí pide sesión", async () => {
+    const res = await middleware(new NextRequest("https://wa.ecovit.test/muestras"));
+    expect(res.status).toBe(307);
+  });
+});

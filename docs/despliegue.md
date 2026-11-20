@@ -55,3 +55,28 @@ de ECOVIT. Las migraciones están en el repo `ecovit-comercial` (0110 a 0115) y 
   - los textos aprobados;
   - la lista blanca (`agregar_lista_blanca_wa`).
 - Mientras el tope no esté definido, el bot, la respuesta sugerida y el playground no gastan.
+
+## Demo sin base
+
+Para enseñar la bandeja sin Supabase, sin Zernio y sin la IA: la app entera corre con datos
+ficticios (constructoras inventadas) en la memoria del navegador. Se puede abrir chats, tomarlos,
+asignarlos, pausar y retomar el bot, contestar y mirar el gasto de IA. Nada se guarda ni sale por
+la red; recargar la página vuelve a los datos de arranque.
+
+- **Variable:** `NEXT_PUBLIC_MODO_MUESTRA=1` (no es secreta). Tiene que estar puesta **antes del
+  build**, porque Next la escribe en el código al compilar. Con el modo prendido no hace falta
+  ninguna variable de Supabase, y las que haya se ignoran.
+- **Entrada:** `/muestra`, que lleva a la bandeja (`/inbox`). Arriba sale la marca «Demostración».
+- **Sin la variable** (o con otro valor que no sea `1`), `/muestra` da 404 y la app es la de
+  siempre.
+- En el modo muestra las rutas `/api` responden 404: la demostración no las usa, y así ni el cron
+  ni los webhooks hacen nada.
+- Los enlaces del panel del cliente a ECOVIT solo aparecen si además está
+  `NEXT_PUBLIC_ECOVIT_URL`; sin ella el panel dice que falta (los clientes de la demo no existen
+  en ECOVIT).
+- En Vercel, la rama `claude/muestra-panel` trae en `vercel.json` los despliegues automáticos
+  prendidos solo para ella. La variable se pone en Vercel para ese entorno (Preview, rama
+  `claude/muestra-panel`).
+- Para ver la demo en local: `NEXT_PUBLIC_MODO_MUESTRA=1 npm run build && NEXT_PUBLIC_MODO_MUESTRA=1
+  npx next start`, y abrir `http://localhost:3000/muestra`. `scripts/capturas-muestra.mjs` saca
+  las capturas de `docs/capturas/panel/` y recorre los clics.

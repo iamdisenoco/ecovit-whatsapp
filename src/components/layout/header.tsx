@@ -42,6 +42,7 @@ interface HeaderProps {
   onOpenSidebar?: () => void;
 }
 
+import { AvisoMuestra } from "@/components/ecovit/aviso-muestra";
 import { useTranslations } from "next-intl";
 
 export function Header({ onOpenSidebar }: HeaderProps) {
@@ -70,6 +71,7 @@ export function Header({ onOpenSidebar }: HeaderProps) {
         <h1 className="truncate text-base font-semibold text-foreground sm:text-lg">
           {t(titleKey as string)}
         </h1>
+        <AvisoMuestra />
       </div>
 
       <div className="flex items-center gap-1 sm:gap-2">

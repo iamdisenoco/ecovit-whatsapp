@@ -1,7 +1,8 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
-import { cookieOptions, supabaseKey, supabaseUrl } from '@/lib/supabase/config'
+import { cookieOptions } from '@/lib/supabase/config'
 import { rolTieneAcceso, urlIngresoEcovit } from '@/lib/ecovit/ingreso'
+import { RUTA_MUESTRA, modoMuestra } from '@/lib/muestra/modo'
 
 /**
  * ECOVIT · Conversaciones no tiene usuarios propios: entra quien tiene sesión
@@ -19,19 +20,47 @@ const SIN_SESION = ['/sin-sesion', '/sin-acceso']
 /** API que se cuidan solas (firma de Meta/Zernio, secreto del cron). */
 const API_PROPIAS = ['/api/whatsapp/webhook', '/api/whatsapp/meta/webhook', '/api/whatsapp/cron', '/api/automations/cron', '/api/flows/cron']
 
+/** La clave publicable con el nombre de ECOVIT o, de respaldo, el de wacrm. */
+const supabaseKey = () =>
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
 /** Por SEGMENTO, no por prefijo de texto (regla de ECOVIT). */
 const enLista = (ruta: string, lista: string[]) =>
   lista.some((p) => ruta === p || ruta.startsWith(`${p}/`))
 
 export async function middleware(request: NextRequest) {
   const ruta = request.nextUrl.pathname
-  if (enLista(ruta, SIN_SESION) || enLista(ruta, API_PROPIAS)) {
+  const esApi = ruta === '/api' || ruta.startsWith('/api/')
+
+  // Modo muestra: la app corre con datos ficticios en el navegador y no hay
+  // sesión que mirar. Las API no existen en la demostración (el navegador ni
+  // las llama): responden 404 sin tocar nada.
+  if (modoMuestra()) {
+    if (esApi) {
+      return NextResponse.json({ error: 'No disponible en la demostración' }, { status: 404 })
+    }
     return NextResponse.next({ request })
+  }
+
+  // Con el modo apagado, /muestra pasa derecho para que la página dé 404
+  // (y no una redirección que delataría que existe).
+  if (enLista(ruta, SIN_SESION) || enLista(ruta, API_PROPIAS) || enLista(ruta, [RUTA_MUESTRA])) {
+    return NextResponse.next({ request })
+  }
+
+  // Sin las variables de Supabase no hay sesión posible: se explica en vez
+  // de caerse. Se leen en cada pedido (no al importar) para que las pruebas
+  // puedan cambiarlas.
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !supabaseKey()) {
+    if (esApi) {
+      return NextResponse.json({ error: 'La app no tiene base configurada' }, { status: 503 })
+    }
+    return NextResponse.redirect(new URL('/sin-sesion', request.url))
   }
 
   let supabaseResponse = NextResponse.next({ request })
 
-  const supabase = createServerClient(supabaseUrl, supabaseKey, {
+  const supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL, supabaseKey()!, {
     cookieOptions,
     cookies: {
       getAll() {
@@ -60,8 +89,6 @@ export async function middleware(request: NextRequest) {
     })
     return response
   }
-
-  const esApi = ruta === '/api' || ruta.startsWith('/api/')
 
   if (!user) {
     if (esApi) {
