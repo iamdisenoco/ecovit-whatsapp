@@ -1,3 +1,4 @@
+import { asignarPorMotor } from '@/lib/conversations/asignar-motor'
 import type {
   Automation,
   AutomationLogStepResult,
@@ -872,12 +873,20 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         agentId = profiles?.[0]?.user_id
       }
       if (!agentId) return 'no agent resolved'
-      await db
+      // ECOVIT · bloque 4 (0113): por `asignar_conversacion_motor`, chat por
+      // chat, con bitácora y aviso. Solo los chats sin dueño: una
+      // automatización no le quita un chat a una persona.
+      const { data: convs, error: convErr } = await db
         .from('conversations')
-        .update({ assigned_agent_id: agentId })
+        .select('id')
         .eq('account_id', args.automation.account_id)
         .eq('contact_id', args.contactId)
-      return `assigned to ${agentId}`
+      if (convErr) throw new Error(convErr.message)
+      let asignados = 0
+      for (const c of (convs ?? []) as { id: string }[]) {
+        if (await asignarPorMotor(db, c.id, agentId, 'automatizacion')) asignados++
+      }
+      return `assigned to ${agentId} (${asignados}/${convs?.length ?? 0})`
     }
 
     case 'update_contact_field': {

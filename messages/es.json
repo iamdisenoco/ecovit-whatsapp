@@ -529,9 +529,9 @@
       "pausedTitle": "El asistente de IA está en pausa aquí",
       "activeText": "El asistente de IA está respondiendo automáticamente",
       "takeOver": "Tomar el control",
-      "resume": "Reanudar IA",
+      "resume": "Retomar IA",
       "tookOver": "Tomaste el control de este chat.",
-      "resumed": "IA reanudada.",
+      "resumed": "La IA retomó el chat y quedó sin asignar.",
       "updateError": "No se pudo actualizar el asistente de IA.",
       "networkError": "No se pudo conectar con el servidor."
     }

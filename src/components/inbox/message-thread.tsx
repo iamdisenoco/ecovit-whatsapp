@@ -986,6 +986,28 @@ export function MessageThread({
     [conversation, canAssignOthers, onAssignChange, t],
   );
 
+  // ECOVIT · bloque 4: «Quitar asignación» suelta el chat por función
+  // (`soltar_conversacion`, 0113), con la marca de la misma lectura. Puede
+  // soltarlo quien lo tiene o la dirección; la función lo decide.
+  const handleUnassign = useCallback(async () => {
+    if (!conversation) return;
+    const visto = conversation.actualizado_en;
+    if (!visto) {
+      toast.error("Falta la marca de la conversación. Recarga la página.");
+      return;
+    }
+    const { data, error } = await createClient().rpc("soltar_conversacion", {
+      p_conversacion: conversation.id,
+      p_visto: visto,
+    });
+    if (error) {
+      toast.error(error.message || t("assignmentUpdateFailed"));
+      setProfilesVersion((v) => v + 1);
+      return;
+    }
+    onAssignChange(conversation.id, null, (data as string | null) ?? undefined);
+  }, [conversation, onAssignChange, t]);
+
   // Empty state — same WhatsApp-style doodle background as the active
   // thread below, so swapping between empty/selected doesn't change the
   // pattern under the user's eye.
@@ -1219,8 +1241,14 @@ export function MessageThread({
                   );
                 })
               )}
-              {/* Sin «Quitar asignación»: la base no tiene función para soltar un
-                  chat. TODO bloque 4: soltar por función, con condición de versión. */}
+              {assignedAgentId && (assignedAgentId === user?.id || canAssignOthers) && (
+                <DropdownMenuItem
+                  onClick={() => void handleUnassign()}
+                  className="text-sm text-muted-foreground"
+                >
+                  Quitar asignación
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -1322,6 +1350,7 @@ export function MessageThread({
         disabled={conversation.ai_autoreply_disabled ?? false}
         handoffSummary={conversation.ai_handoff_summary}
         assignedAgentId={assignedAgentId}
+        actualizadoEn={conversation.actualizado_en ?? null}
         currentUserId={user?.id}
         onChange={(patch) => {
           if ("assigned_agent_id" in patch) {

@@ -32,6 +32,7 @@
  *     INSERT raises 23505 and the runner catches & exits.
  */
 
+import { asignarPorMotor } from "@/lib/conversations/asignar-motor";
 import { supabaseAdmin } from "./admin-client";
 import {
   engineSendInteractiveButtons,
@@ -498,20 +499,24 @@ async function executeHandoff(
   node: FlowNodeRow,
 ): Promise<void> {
   const cfg = node.config as { assign_to?: string; note?: string };
-  const convUpdate: Record<string, unknown> = {
-    status: "pending",
-    updated_at: new Date().toISOString(),
-  };
-  if (cfg.assign_to) convUpdate.assigned_agent_id = cfg.assign_to;
+  // ECOVIT · bloque 4 (0113): el asignado no se escribe con `update`, ni con la
+  // clave de servicio (la reja lo rechaza y, como iba en el mismo `update` que
+  // `status`, fallaba entero). El estado va aparte y el asignado por
+  // `asignar_conversacion_motor`, que no le quita el chat a una persona.
+  let asignado: boolean | null = null;
   if (run.conversation_id) {
     await db
       .from("conversations")
-      .update(convUpdate)
+      .update({ status: "pending", updated_at: new Date().toISOString() })
       .eq("id", run.conversation_id);
+    if (cfg.assign_to) {
+      asignado = await asignarPorMotor(db, run.conversation_id, cfg.assign_to, "flujo");
+    }
   }
   await logEvent(db, run.id, "handoff", node.node_key, {
     note: cfg.note ?? null,
     assigned_to: cfg.assign_to ?? null,
+    asignado,
   });
   await endRun(db, run.id, "handed_off", "handoff_node");
 }

@@ -17,6 +17,9 @@ interface AiThreadBannerProps {
   /** Current assignee; when a human owns the thread the bot won't run,
    *  so the "AI active" banner is suppressed. */
   assignedAgentId?: string | null;
+  /** `conversations.actualizado_en` de la MISMA lectura que el asignado: la
+   *  condición de versión de tomar y retomar (mínimo 4). */
+  actualizadoEn?: string | null;
   /** The acting agent. ECOVIT: ya no se usa (tomar va por la función en el servidor). */
   currentUserId?: string | null;
   /** Called after a successful toggle so the parent can patch its local
@@ -42,6 +45,7 @@ export function AiThreadBanner({
   disabled,
   handoffSummary,
   assignedAgentId,
+  actualizadoEn,
   onChange,
 }: AiThreadBannerProps) {
   const t = useTranslations("Inbox.aiBanner");
@@ -65,13 +69,23 @@ export function AiThreadBanner({
 
   const toggle = useCallback(
     async (paused: boolean) => {
+      if (!actualizadoEn) {
+        toast.error("Falta la marca de la conversación. Recarga la página.");
+        return;
+      }
       setBusy(true);
       try {
+        // ECOVIT · bloque 4: «Tomar el control» toma el chat (si no tiene
+        // dueño) y pausa la IA; «Retomar IA» suelta el chat y se lo devuelve
+        // al bot. Las dos con la marca que se está viendo.
         const res = await fetch(`/api/ai/autoreply/${conversationId}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          // "Take over" also assigns the thread to the acting agent.
-          body: JSON.stringify({ paused, assign_to_me: paused }),
+          body: JSON.stringify({
+            accion: paused ? "tomar" : "retomar",
+            visto: actualizadoEn,
+            asignado_visto: assignedAgentId ?? null,
+          }),
         });
         if (!res.ok) {
           const j = await res.json().catch(() => ({}));
@@ -83,8 +97,7 @@ export function AiThreadBanner({
           actualizado_en?: string;
         };
         setPaused(paused);
-        // ECOVIT: lo que dice el servidor, no lo que suponemos — tomar va
-        // por función y «Retomar IA» ya no suelta el chat.
+        // ECOVIT: lo que dice el servidor, no lo que suponemos.
         onChange?.({
           ai_autoreply_disabled: paused,
           ...("assigned_agent_id" in j
@@ -98,7 +111,7 @@ export function AiThreadBanner({
         setBusy(false);
       }
     },
-    [conversationId, onChange, t],
+    [conversationId, actualizadoEn, assignedAgentId, onChange, t],
   );
 
   // Account has no auto-reply → nothing to show. (Still loading → nothing.)
