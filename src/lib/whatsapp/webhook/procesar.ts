@@ -15,143 +15,179 @@ import type {
   EventoMensajeEnviado,
   EventoWhatsApp,
   IdentidadRemitente,
-} from '../proveedor/tipos'
-import type { AlmacenWhatsApp, ContentType, Inquilino, MensajeNuevo } from './almacen'
+} from '../proveedor/tipos';
+import type {
+  AlmacenWhatsApp,
+  ContentType,
+  Inquilino,
+  MensajeNuevo,
+} from './almacen';
 import {
   MOTIVO_CELULAR,
   debeDespertarPorInactividad,
   ecoDelCelularCallaAlBot,
   entrantePuedeDespertarAlBot,
-} from './coexistencia'
+} from './coexistencia';
 
 /** Texto que queda en el chat mientras el adjunto no se haya bajado. */
-export const ADJUNTO_SIN_DESCARGAR = 'Adjunto recibido, sin descargar'
+export const ADJUNTO_SIN_DESCARGAR = 'Adjunto recibido, sin descargar';
 
 export interface TrabajoAdjunto {
-  clase: 'adjunto'
-  accountId: string
-  mensajeId: string
-  wamid: string
-  adjunto: AdjuntoEntrante
+  clase: 'adjunto';
+  accountId: string;
+  mensajeId: string;
+  wamid: string;
+  adjunto: AdjuntoEntrante;
   /** El texto real del mensaje (sin el aviso de «sin descargar»). */
-  textoOriginal: string | null
+  textoOriginal: string | null;
 }
 
 export interface TrabajoMotores {
-  clase: 'motores'
-  inquilino: Inquilino
-  contactoId: string
-  contactoCreado: boolean
-  conversacionId: string
-  wamid: string
-  texto: string
-  primerEntrante: boolean
+  clase: 'motores';
+  inquilino: Inquilino;
+  contactoId: string;
+  contactoCreado: boolean;
+  conversacionId: string;
+  wamid: string;
+  texto: string;
+  primerEntrante: boolean;
 }
 
-export type TrabajoPosterior = TrabajoAdjunto | TrabajoMotores
+export type TrabajoPosterior = TrabajoAdjunto | TrabajoMotores;
 
 export interface ResultadoProcesar {
-  procesados: number
-  repetidos: number
-  ignorados: number
-  trabajos: TrabajoPosterior[]
+  procesados: number;
+  repetidos: number;
+  ignorados: number;
+  trabajos: TrabajoPosterior[];
 }
 
 function tieneIdentidad(id: IdentidadRemitente): boolean {
-  return !!id.telefono || !!id.waUserId
+  return !!id.telefono || !!id.waUserId;
 }
 
 function contentTypeDe(adjunto: AdjuntoEntrante | undefined): ContentType {
-  if (!adjunto) return 'text'
+  if (!adjunto) return 'text';
   switch (adjunto.tipo) {
     case 'image':
     case 'sticker':
-      return 'image'
+      return 'image';
     case 'video':
-      return 'video'
+      return 'video';
     case 'audio':
-      return 'audio'
+      return 'audio';
     case 'document':
-      return 'document'
+      return 'document';
     default:
-      return 'document'
+      return 'document';
   }
 }
 
 function resumen(texto: string | null, tipo: ContentType): string {
-  return texto?.trim() ? texto : `[${tipo}]`
+  return texto?.trim() ? texto : `[${tipo}]`;
 }
 
 export class Procesador {
-  private inquilino: Inquilino | null = null
+  private inquilino: Inquilino | null = null;
 
   constructor(private readonly almacen: AlmacenWhatsApp) {}
 
   private async elInquilino(): Promise<Inquilino> {
-    this.inquilino ??= await this.almacen.resolverInquilino()
-    return this.inquilino
+    this.inquilino ??= await this.almacen.resolverInquilino();
+    return this.inquilino;
   }
 
   async procesar(eventos: EventoWhatsApp[]): Promise<ResultadoProcesar> {
-    const resultado: ResultadoProcesar = { procesados: 0, repetidos: 0, ignorados: 0, trabajos: [] }
+    const resultado: ResultadoProcesar = {
+      procesados: 0,
+      repetidos: 0,
+      ignorados: 0,
+      trabajos: [],
+    };
 
     for (const evento of eventos) {
-      if (evento.eventoId && (await this.almacen.eventoYaProcesado(evento.eventoId))) {
-        resultado.repetidos++
-        continue
+      if (
+        evento.eventoId &&
+        (await this.almacen.eventoYaProcesado(evento.eventoId))
+      ) {
+        resultado.repetidos++;
+        continue;
       }
 
       // Las muestras de `POST /v1/webhooks/test` no crean contactos ni chats.
       if (evento.prueba || evento.tipo === 'prueba') {
-        console.info(`[webhook] evento de prueba recibido (${evento.tipo}, id ${evento.eventoId || '—'})`)
+        console.info(
+          `[webhook] evento de prueba recibido (${evento.tipo}, id ${evento.eventoId || '—'})`
+        );
       } else if (evento.tipo === 'ignorado') {
-        resultado.ignorados++
+        resultado.ignorados++;
       } else if (evento.tipo === 'cuenta_desconectada') {
-        const inq = await this.elInquilino()
-        console.warn(`[webhook] el proveedor avisa que la cuenta ${evento.cuentaId ?? '—'} se desconectó`)
-        await this.almacen.anotarCuentaDesconectada(inq.accountId)
+        const inq = await this.elInquilino();
+        console.warn(
+          `[webhook] el proveedor avisa que la cuenta ${evento.cuentaId ?? '—'} se desconectó`
+        );
+        await this.almacen.anotarCuentaDesconectada(inq.accountId);
       } else if (evento.tipo === 'estado') {
-        const inq = await this.elInquilino()
+        const inq = await this.elInquilino();
         await this.almacen.aplicarEstado(inq.accountId, {
           wamid: evento.mensajeId,
           status: evento.estado,
           failure:
             evento.estado === 'failed' && evento.error
-              ? { code: evento.error.codigo ?? 0, title: evento.error.titulo, details: evento.error.detalle }
+              ? {
+                  code: evento.error.codigo ?? 0,
+                  title: evento.error.titulo,
+                  details: evento.error.detalle,
+                }
               : null,
           statusAt: evento.ocurridoEn,
-        })
+        });
       } else if (evento.tipo === 'mensaje_entrante') {
-        const nuevo = await this.entrante(evento, resultado.trabajos)
-        if (!nuevo) resultado.repetidos++
+        const nuevo = await this.entrante(evento, resultado.trabajos);
+        if (!nuevo) resultado.repetidos++;
       } else if (evento.tipo === 'mensaje_enviado') {
-        const nuevo = await this.enviado(evento)
-        if (!nuevo) resultado.repetidos++
+        const nuevo = await this.enviado(evento);
+        if (!nuevo) resultado.repetidos++;
       }
 
-      if (evento.eventoId) await this.almacen.marcarEventoProcesado(evento.eventoId, evento.tipo)
-      resultado.procesados++
+      if (evento.eventoId)
+        await this.almacen.marcarEventoProcesado(evento.eventoId, evento.tipo);
+      resultado.procesados++;
     }
-    return resultado
+    return resultado;
   }
 
   /** `false` si el mensaje ya estaba (repetido por wamid). */
-  private async entrante(evento: EventoMensajeEntrante, trabajos: TrabajoPosterior[]): Promise<boolean> {
+  private async entrante(
+    evento: EventoMensajeEntrante,
+    trabajos: TrabajoPosterior[]
+  ): Promise<boolean> {
     if (!tieneIdentidad(evento.remitente)) {
       // Sin teléfono ni BSUID no hay a quién atarlo; reintentar no lo arregla.
-      console.error('[webhook] mensaje entrante sin teléfono ni BSUID; se descarta:', evento.mensajeId)
-      return true
+      console.error(
+        '[webhook] mensaje entrante sin teléfono ni BSUID; se descarta:',
+        evento.mensajeId
+      );
+      return true;
     }
-    const inq = await this.elInquilino()
-    const { contactoId, creado } = await this.almacen.buscarOCrearContacto(inq, evento.remitente)
-    const { conversacion } = await this.almacen.buscarOCrearConversacion(inq, contactoId)
+    const inq = await this.elInquilino();
+    const { contactoId, creado } = await this.almacen.buscarOCrearContacto(
+      inq,
+      evento.remitente
+    );
+    const { conversacion } = await this.almacen.buscarOCrearConversacion(
+      inq,
+      contactoId
+    );
     if (evento.referencia.conversacionId) {
-      await this.almacen.guardarReferencia(conversacion.id, evento.referencia)
+      await this.almacen.guardarReferencia(conversacion.id, evento.referencia);
     }
 
-    const adjunto = evento.adjuntos[0]
-    const tipo = contentTypeDe(adjunto)
-    const responde = evento.citaA ? await this.almacen.buscarMensajePorWamid(conversacion.id, evento.citaA) : null
+    const adjunto = evento.adjuntos[0];
+    const tipo = contentTypeDe(adjunto);
+    const responde = evento.citaA
+      ? await this.almacen.buscarMensajePorWamid(conversacion.id, evento.citaA)
+      : null;
 
     const fila: MensajeNuevo = {
       conversation_id: conversacion.id,
@@ -165,19 +201,19 @@ export class Procesador {
       status: 'delivered',
       created_at: evento.enviadoEn,
       reply_to_message_id: responde,
-    }
-    const insertado = await this.almacen.insertarMensajeSiNuevo(fila)
-    if (!insertado) return false
+    };
+    const insertado = await this.almacen.insertarMensajeSiNuevo(fila);
+    if (!insertado) return false;
 
     // Antes de registrar el entrante: `last_inbound_at` todavía es el anterior.
     if (debeDespertarPorInactividad(conversacion, evento.enviadoEn)) {
-      await this.almacen.despertarBot(conversacion.id, MOTIVO_CELULAR)
+      await this.almacen.despertarBot(conversacion.id, MOTIVO_CELULAR);
     }
     const { primerEntrante } = await this.almacen.registrarEntrante(
       conversacion,
       resumen(evento.texto, tipo),
-      evento.enviadoEn,
-    )
+      evento.enviadoEn
+    );
 
     if (adjunto) {
       trabajos.push({
@@ -187,7 +223,7 @@ export class Procesador {
         wamid: evento.mensajeId,
         adjunto,
         textoOriginal: evento.texto,
-      })
+      });
     }
 
     if (entrantePuedeDespertarAlBot(evento, inq.conectadoDesde)) {
@@ -200,34 +236,49 @@ export class Procesador {
         wamid: evento.mensajeId,
         texto: evento.texto ?? '',
         primerEntrante,
-      })
+      });
     } else {
-      console.info(`[webhook] entrante ${evento.mensajeId} guardado sin despertar al bot (historia o en espera)`)
+      console.info(
+        `[webhook] entrante ${evento.mensajeId} guardado sin despertar al bot (historia o en espera)`
+      );
     }
-    return true
+    return true;
   }
 
   /** Un mensaje que salió del número: por la API, el celular o el agente de Meta. */
   private async enviado(evento: EventoMensajeEnviado): Promise<boolean> {
     if (!tieneIdentidad(evento.destinatario)) {
-      console.error('[webhook] message.sent sin participante identificable; se descarta:', evento.mensajeId)
-      return true
+      console.error(
+        '[webhook] message.sent sin participante identificable; se descarta:',
+        evento.mensajeId
+      );
+      return true;
     }
-    const inq = await this.elInquilino()
-    const { contactoId } = await this.almacen.buscarOCrearContacto(inq, evento.destinatario)
-    const { conversacion } = await this.almacen.buscarOCrearConversacion(inq, contactoId)
+    const inq = await this.elInquilino();
+    const { contactoId } = await this.almacen.buscarOCrearContacto(
+      inq,
+      evento.destinatario
+    );
+    const { conversacion } = await this.almacen.buscarOCrearConversacion(
+      inq,
+      contactoId
+    );
     if (evento.referencia.conversacionId) {
-      await this.almacen.guardarReferencia(conversacion.id, evento.referencia)
+      await this.almacen.guardarReferencia(conversacion.id, evento.referencia);
     }
 
     // Un envío nuestro que quedó dudoso se resuelve aquí (plan.md §3, amarillo 7).
     if (evento.origen === 'api') {
-      const conciliado = await this.almacen.conciliarEnvioPendiente(conversacion.id, evento.texto, evento.mensajeId)
-      if (conciliado) return true
+      const conciliado = await this.almacen.conciliarEnvioPendiente(
+        conversacion.id,
+        evento.texto,
+        evento.mensajeId
+      );
+      if (conciliado) return true;
     }
 
-    const adjunto = evento.adjuntos[0]
-    const tipo = contentTypeDe(adjunto)
+    const adjunto = evento.adjuntos[0];
+    const tipo = contentTypeDe(adjunto);
     const insertado = await this.almacen.insertarMensajeSiNuevo({
       conversation_id: conversacion.id,
       // El agente de Meta es un bot ajeno; lo demás lo mandó una persona del negocio.
@@ -244,7 +295,7 @@ export class Procesador {
       status: 'sent',
       created_at: evento.enviadoEn,
       reply_to_message_id: null,
-    })
+    });
     if (!insertado) {
       // Ya estaba (nuestro propio envío, o un repetido): el estado «sent» igual vale.
       await this.almacen.aplicarEstado(inq.accountId, {
@@ -252,17 +303,25 @@ export class Procesador {
         status: 'sent',
         failure: null,
         statusAt: evento.enviadoEn,
-      })
-      return false
+      });
+      return false;
     }
 
-    await this.almacen.registrarSaliente(conversacion.id, resumen(evento.texto, tipo))
+    await this.almacen.registrarSaliente(
+      conversacion.id,
+      resumen(evento.texto, tipo)
+    );
 
-    if (evento.origen === 'celular' && ecoDelCelularCallaAlBot(evento.enviadoEn, inq.conectadoDesde)) {
-      console.info(`[webhook] contestado desde el celular en ${conversacion.id}: se calla el bot`)
-      await this.almacen.callarBot(conversacion.id, MOTIVO_CELULAR)
-      await this.almacen.pausarFlujos(inq.accountId, contactoId)
+    if (
+      evento.origen === 'celular' &&
+      ecoDelCelularCallaAlBot(evento.enviadoEn, inq.conectadoDesde)
+    ) {
+      console.info(
+        `[webhook] contestado desde el celular en ${conversacion.id}: se calla el bot`
+      );
+      await this.almacen.callarBot(conversacion.id, MOTIVO_CELULAR);
+      await this.almacen.pausarFlujos(inq.accountId, contactoId);
     }
-    return true
+    return true;
   }
 }

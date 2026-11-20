@@ -11,33 +11,40 @@
 //   trae la coexistencia) no despierta al bot.
 // ============================================================
 
-import type { ConversacionFila } from './almacen'
+import type { ConversacionFila } from './almacen';
 
 /** Lo que se escribe en `ai_handoff_summary` al callar al bot por el celular. */
-export const MOTIVO_CELULAR = 'Contestado desde el celular (WhatsApp Business): el bot se calló en este chat.'
+export const MOTIVO_CELULAR =
+  'Contestado desde el celular (WhatsApp Business): el bot se calló en este chat.';
 
-export const VEINTICUATRO_HORAS_MS = 24 * 60 * 60 * 1000
+export const VEINTICUATRO_HORAS_MS = 24 * 60 * 60 * 1000;
 
 function ms(iso: string | null | undefined): number | null {
-  if (!iso) return null
-  const t = Date.parse(iso)
-  return Number.isFinite(t) ? t : null
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? t : null;
 }
 
 /** ¿Es historia de antes de conectar el número? Sin fecha de conexión, no se sabe: `false`. */
-export function esAnteriorALaConexion(enviadoEn: string, conectadoDesde: string | null): boolean {
-  const envio = ms(enviadoEn)
-  const conexion = ms(conectadoDesde)
-  if (envio === null || conexion === null) return false
-  return envio < conexion
+export function esAnteriorALaConexion(
+  enviadoEn: string,
+  conectadoDesde: string | null
+): boolean {
+  const envio = ms(enviadoEn);
+  const conexion = ms(conectadoDesde);
+  if (envio === null || conexion === null) return false;
+  return envio < conexion;
 }
 
 /**
  * ¿Un eco del celular calla al bot? Solo si es de después de conectar: la
  * historia sincronizada no apaga el bot en chats que ya terminaron.
  */
-export function ecoDelCelularCallaAlBot(enviadoEn: string, conectadoDesde: string | null): boolean {
-  return !esAnteriorALaConexion(enviadoEn, conectadoDesde)
+export function ecoDelCelularCallaAlBot(
+  enviadoEn: string,
+  conectadoDesde: string | null
+): boolean {
+  return !esAnteriorALaConexion(enviadoEn, conectadoDesde);
 }
 
 /**
@@ -48,17 +55,20 @@ export function ecoDelCelularCallaAlBot(enviadoEn: string, conectadoDesde: strin
 export function debeDespertarPorInactividad(
   conversacion: Pick<
     ConversacionFila,
-    'ai_autoreply_disabled' | 'ai_handoff_summary' | 'assigned_agent_id' | 'last_inbound_at'
+    | 'ai_autoreply_disabled'
+    | 'ai_handoff_summary'
+    | 'assigned_agent_id'
+    | 'last_inbound_at'
   >,
-  recibidoEn: string,
+  recibidoEn: string
 ): boolean {
-  if (!conversacion.ai_autoreply_disabled) return false
-  if (conversacion.ai_handoff_summary !== MOTIVO_CELULAR) return false
-  if (conversacion.assigned_agent_id) return false
-  const anterior = ms(conversacion.last_inbound_at)
-  const ahora = ms(recibidoEn)
-  if (anterior === null || ahora === null) return false
-  return ahora - anterior >= VEINTICUATRO_HORAS_MS
+  if (!conversacion.ai_autoreply_disabled) return false;
+  if (conversacion.ai_handoff_summary !== MOTIVO_CELULAR) return false;
+  if (conversacion.assigned_agent_id) return false;
+  const anterior = ms(conversacion.last_inbound_at);
+  const ahora = ms(recibidoEn);
+  if (anterior === null || ahora === null) return false;
+  return ahora - anterior >= VEINTICUATRO_HORAS_MS;
 }
 
 /**
@@ -67,8 +77,8 @@ export function debeDespertarPorInactividad(
  */
 export function entrantePuedeDespertarAlBot(
   evento: { enviadoEn: string; enEspera: boolean; esHistoria: boolean },
-  conectadoDesde: string | null,
+  conectadoDesde: string | null
 ): boolean {
-  if (evento.esHistoria || evento.enEspera) return false
-  return !esAnteriorALaConexion(evento.enviadoEn, conectadoDesde)
+  if (evento.esHistoria || evento.enEspera) return false;
+  return !esAnteriorALaConexion(evento.enviadoEn, conectadoDesde);
 }

@@ -7,37 +7,40 @@
 // (y Zernio reintente) que procesar con el proveedor equivocado.
 // ============================================================
 
-import { leerCredencialesMeta } from '../config-servidor'
-import { ProveedorMeta } from './meta'
-import { ProveedorSimulado } from './simulado'
-import { ProveedorZernio, configZernioDesdeEntorno } from './zernio'
-import { nombreProveedor } from './nombre'
-import type { Entorno, ProveedorWhatsApp } from './tipos'
+import { leerCredencialesMeta } from '../config-servidor';
+import { ProveedorMeta } from './meta';
+import { ProveedorSimulado } from './simulado';
+import { ProveedorZernio, configZernioDesdeEntorno } from './zernio';
+import { nombreProveedor } from './nombre';
+import type { Entorno, ProveedorWhatsApp } from './tipos';
 
-export * from './tipos'
-export { PROVEEDORES, nombreProveedor, nombreProveedorOnull } from './nombre'
+export * from './tipos';
+export { PROVEEDORES, nombreProveedor, nombreProveedorOnull } from './nombre';
 
-let simuladoCompartido: ProveedorSimulado | null = null
+let simuladoCompartido: ProveedorSimulado | null = null;
 
 /**
  * El proveedor del servidor. `accountId` solo lo usa Meta, que guarda su token
  * cifrado en `whatsapp_config`; Zernio y el simulado leen el entorno.
  */
 export function crearProveedor(
-  opciones: { accountId?: string | null; env?: Entorno } = {},
+  opciones: { accountId?: string | null; env?: Entorno } = {}
 ): ProveedorWhatsApp {
-  const env = opciones.env ?? process.env
-  const nombre = nombreProveedor(env)
-  if (nombre === 'zernio') return new ProveedorZernio(configZernioDesdeEntorno(env))
+  const env = opciones.env ?? process.env;
+  const nombre = nombreProveedor(env);
+  if (nombre === 'zernio')
+    return new ProveedorZernio(configZernioDesdeEntorno(env));
   if (nombre === 'simulado') {
     // Uno por proceso: así los envíos simulados se pueden mirar después.
-    simuladoCompartido ??= ProveedorSimulado.desdeEntorno(env)
-    return simuladoCompartido
+    simuladoCompartido ??= ProveedorSimulado.desdeEntorno(env);
+    return simuladoCompartido;
   }
-  const accountId = opciones.accountId ?? null
+  const accountId = opciones.accountId ?? null;
   return new ProveedorMeta(async () => {
-    if (!accountId) return null
-    const c = await leerCredencialesMeta(accountId)
-    return c ? { phoneNumberId: c.phoneNumberId, accessToken: c.accessToken } : null
-  })
+    if (!accountId) return null;
+    const c = await leerCredencialesMeta(accountId);
+    return c
+      ? { phoneNumberId: c.phoneNumberId, accessToken: c.accessToken }
+      : null;
+  });
 }

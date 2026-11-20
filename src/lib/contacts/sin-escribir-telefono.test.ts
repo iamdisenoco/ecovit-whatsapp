@@ -12,10 +12,10 @@ import { join, relative } from 'node:path'
 
 const RAIZ = join(__dirname, '..', '..')
 // Bloque 5: el webhook se partió en dos. El de todos los proveedores escribe por su
-// almacén (`lib/whatsapp/webhook/almacen-supabase.ts`); el de Meta que traía wacrm
+// almacén (`lib/whatsapp/webhook/contactos-supabase.ts`); el de Meta que traía wacrm
 // quedó entero en `app/api/whatsapp/meta/webhook`. Los dos crean contactos.
 const WEBHOOKS = [
-  'lib/whatsapp/webhook/almacen-supabase.ts',
+  'lib/whatsapp/webhook/contactos-supabase.ts',
   'app/api/whatsapp/meta/webhook/route.ts',
 ]
 

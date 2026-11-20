@@ -6,8 +6,8 @@
 // `scripts/simular-zernio.mts`, así que este archivo no importa nada.
 // ============================================================
 
-export const CUENTA_EJEMPLO = '66b2e19d8c3f5a7e9d0b1c2d'
-export const CONVERSACION_EJEMPLO = '66c3d2ae7b4f6c8d0e1f2a3b'
+export const CUENTA_EJEMPLO = '66b2e19d8c3f5a7e9d0b1c2d';
+export const CONVERSACION_EJEMPLO = '66c3d2ae7b4f6c8d0e1f2a3b';
 
 /** Literal de docs.zernio.com/webhooks («First event», paso 3). */
 export const EJEMPLO_WEBHOOK_TEST = {
@@ -15,25 +15,25 @@ export const EJEMPLO_WEBHOOK_TEST = {
   event: 'webhook.test',
   message: 'This is a test webhook from Zernio',
   timestamp: '2027-01-01T17:00:00Z',
-}
+};
 
 function cuenta(accountId = CUENTA_EJEMPLO) {
   // `account.id` repite `account.accountId` «for compatibility».
-  return { accountId, id: accountId, platform: 'whatsapp' }
+  return { accountId, id: accountId, platform: 'whatsapp' };
 }
 
 export interface OpcionesRecibido {
-  id: string
-  wamid: string
+  id: string;
+  wamid: string;
   /** E.164 con «+», o null (usuarios con nombre de usuario desde abril de 2026). */
-  telefono: string | null
-  bsuid?: string | null
-  nombre?: string
-  texto?: string | null
-  sentAt?: string
-  conversationId?: string
-  standby?: boolean
-  adjuntos?: Array<{ type: string; url: string; mimeType?: string }>
+  telefono: string | null;
+  bsuid?: string | null;
+  nombre?: string;
+  texto?: string | null;
+  sentAt?: string;
+  conversationId?: string;
+  standby?: boolean;
+  adjuntos?: Array<{ type: string; url: string; mimeType?: string }>;
 }
 
 export function mensajeRecibido(o: OpcionesRecibido) {
@@ -41,9 +41,9 @@ export function mensajeRecibido(o: OpcionesRecibido) {
     id: o.telefono ? o.telefono.replace(/^\+/, '') : (o.bsuid ?? ''),
     name: o.nombre ?? 'Cliente de prueba',
     phoneNumber: o.telefono,
-  }
-  if (o.bsuid) sender.businessScopedUserId = o.bsuid
-  const sentAt = o.sentAt ?? '2026-11-20T15:00:00Z'
+  };
+  if (o.bsuid) sender.businessScopedUserId = o.bsuid;
+  const sentAt = o.sentAt ?? '2026-11-20T15:00:00Z';
   return {
     id: o.id,
     event: 'message.received',
@@ -53,7 +53,10 @@ export function mensajeRecibido(o: OpcionesRecibido) {
       platform: 'whatsapp',
       platformMessageId: o.wamid,
       direction: 'incoming',
-      text: o.texto === undefined ? 'Hola, ¿tienen el vidrio templado de 6 mm?' : o.texto,
+      text:
+        o.texto === undefined
+          ? 'Hola, ¿tienen el vidrio templado de 6 mm?'
+          : o.texto,
       attachments: o.adjuntos ?? [],
       sender,
       sentAt,
@@ -67,28 +70,30 @@ export function mensajeRecibido(o: OpcionesRecibido) {
     },
     conversation: {
       id: o.conversationId ?? CONVERSACION_EJEMPLO,
-      participantId: o.telefono ? o.telefono.replace(/^\+/, '') : (o.bsuid ?? ''),
+      participantId: o.telefono
+        ? o.telefono.replace(/^\+/, '')
+        : (o.bsuid ?? ''),
       participantName: o.nombre ?? 'Cliente de prueba',
     },
     account: cuenta(),
     metadata: o.standby ? { standby: true } : null,
     timestamp: sentAt,
-  }
+  };
 }
 
 export interface OpcionesEnviado {
-  id: string
-  wamid: string
+  id: string;
+  wamid: string;
   /** El cliente (dígitos con indicativo, sin «+»). */
-  participante: string
-  texto?: string | null
-  source?: 'whatsapp_business_app' | 'cloud_api' | 'meta_business_agent'
-  sentAt?: string
-  conversationId?: string
+  participante: string;
+  texto?: string | null;
+  source?: 'whatsapp_business_app' | 'cloud_api' | 'meta_business_agent';
+  sentAt?: string;
+  conversationId?: string;
 }
 
 export function mensajeEnviado(o: OpcionesEnviado) {
-  const sentAt = o.sentAt ?? '2026-11-20T15:05:00Z'
+  const sentAt = o.sentAt ?? '2026-11-20T15:05:00Z';
   return {
     id: o.id,
     event: 'message.sent',
@@ -120,14 +125,19 @@ export function mensajeEnviado(o: OpcionesEnviado) {
     },
     account: cuenta(),
     timestamp: sentAt,
-  }
+  };
 }
 
 export function estadoMensaje(
   evento: 'message.delivered' | 'message.read' | 'message.failed',
-  o: { id: string; wamid: string; statusAt?: string; error?: { code: string | number; title: string; message: string } },
+  o: {
+    id: string;
+    wamid: string;
+    statusAt?: string;
+    error?: { code: string | number; title: string; message: string };
+  }
 ) {
-  const statusAt = o.statusAt ?? '2026-11-20T15:06:00Z'
+  const statusAt = o.statusAt ?? '2026-11-20T15:06:00Z';
   return {
     id: o.id,
     event: evento,
@@ -143,7 +153,7 @@ export function estadoMensaje(
     conversation: { id: CONVERSACION_EJEMPLO },
     account: cuenta(),
     timestamp: statusAt,
-  }
+  };
 }
 
 export function cuentaDesconectada(id: string) {
@@ -152,5 +162,5 @@ export function cuentaDesconectada(id: string) {
     event: 'account.disconnected',
     account: cuenta(),
     timestamp: '2026-11-20T16:00:00Z',
-  }
+  };
 }
