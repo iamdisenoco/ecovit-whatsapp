@@ -41,11 +41,13 @@ import {
 import { useCan } from "@/hooks/use-can";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { MEDIA_MAX_BYTES_BY_KIND } from "@/lib/storage/upload-media";
 import {
-  deleteAccountMedia,
-  MEDIA_MAX_BYTES_BY_KIND,
-} from "@/lib/storage/upload-media";
-import { subirAdjuntoSaliente } from "@/lib/storage/subir-adjunto-saliente";
+  borrarAdjuntoSaliente,
+  MENSAJE_TOPE_SUBIDA,
+  subirAdjuntoSaliente,
+  TOPE_SUBIDA_BYTES,
+} from "@/lib/storage/subir-adjunto-saliente";
 import { ReplyQuote } from "./reply-quote";
 import { useTranslations } from "next-intl";
 import {
@@ -188,9 +190,9 @@ export function MessageComposer({
   }, [draft]);
 
   // Best-effort GC of a staged object the user never sent. Fire-and-forget.
+  // ECOVIT: por el servidor (el bucket privado no deja escribir al navegador).
   const removeStaged = useCallback((path: string | undefined) => {
-    if (!path) return;
-    void deleteAccountMedia(CHAT_MEDIA_BUCKET, path).catch(() => {});
+    void borrarAdjuntoSaliente(path);
   }, []);
 
   // Voice recording state. The recorder encodes Ogg/Opus in-browser
@@ -404,6 +406,11 @@ export function MessageComposer({
       // Per-kind ceiling mirrors Meta's caps (image 5 MB, etc.) so we
       // reject before upload rather than orphaning an object that Meta
       // would then refuse at send.
+      // ECOVIT: además, lo que deja subir una función de Vercel (~4 MB).
+      if (file.size > TOPE_SUBIDA_BYTES) {
+        toast.error(MENSAJE_TOPE_SUBIDA);
+        return;
+      }
       const max = MEDIA_MAX_BYTES_BY_KIND[kind];
       if (file.size > max) {
         toast.error(
@@ -449,7 +456,7 @@ export function MessageComposer({
         type: "audio/ogg",
       });
       if (file.size === 0) return; // cancelled / empty take
-      if (file.size > MEDIA_MAX_BYTES_BY_KIND.audio) {
+      if (file.size > Math.min(MEDIA_MAX_BYTES_BY_KIND.audio, TOPE_SUBIDA_BYTES)) {
         toast.error(t("recordingTooLong"));
         return;
       }

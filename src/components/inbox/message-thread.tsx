@@ -45,10 +45,9 @@ import { MediaLightbox } from "./media-lightbox";
 import { collectMediaGallery } from "@/lib/media/gallery";
 import {
   MessageComposer,
-  CHAT_MEDIA_BUCKET,
   type SendMediaPayload,
 } from "./message-composer";
-import { deleteAccountMedia } from "@/lib/storage/upload-media";
+import { borrarAdjuntoSaliente } from "@/lib/storage/subir-adjunto-saliente";
 import { TemplatePicker } from "./template-picker";
 import { AiThreadBanner } from "./ai-thread-banner";
 import { buildReplyPreview } from "./reply-quote";
@@ -684,7 +683,7 @@ export function MessageThread({
           onUpdateMessage(tempId, { status: "failed" });
           // The upload never reached the recipient — GC the orphaned
           // object rather than leaving it in the public bucket forever.
-          void deleteAccountMedia(CHAT_MEDIA_BUCKET, payload.path).catch(() => {});
+          void borrarAdjuntoSaliente(payload.path);
           return;
         }
 
@@ -694,7 +693,7 @@ export function MessageThread({
         const reason = err instanceof Error ? err.message : t("networkError");
         toast.error(t("sendFailed", { reason }));
         onUpdateMessage(tempId, { status: "failed" });
-        void deleteAccountMedia(CHAT_MEDIA_BUCKET, payload.path).catch(() => {});
+        void borrarAdjuntoSaliente(payload.path);
       }
     },
     [conversation, onNewMessage, onUpdateMessage, t],

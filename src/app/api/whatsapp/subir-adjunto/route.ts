@@ -3,7 +3,11 @@ import { NextResponse } from 'next/server';
 import { requireRole, toErrorResponse } from '@/lib/auth/account';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
 import { extensionForMime } from '@/lib/media/filename';
-import { MEDIA_MAX_BYTES } from '@/lib/storage/upload-media';
+import {
+  MENSAJE_TOPE_SUBIDA,
+  RUTA_BORRADOR,
+  TOPE_SUBIDA_BYTES,
+} from '@/lib/storage/subir-adjunto-saliente';
 import { normalizeMimeType } from '@/lib/whatsapp/mirror-inbound-media';
 import { BUCKET_ADJUNTOS } from '@/lib/whatsapp/webhook/almacen-supabase';
 import { urlInternaAdjunto } from '@/lib/whatsapp/webhook/adjuntos';
@@ -29,11 +33,11 @@ export async function POST(request: Request) {
     if (!archivo || typeof archivo === 'string') {
       return NextResponse.json({ error: 'Falta el archivo' }, { status: 400 });
     }
-    if (archivo.size === 0 || archivo.size > MEDIA_MAX_BYTES) {
-      return NextResponse.json(
-        { error: 'El archivo está vacío o pasa de 16 MB' },
-        { status: 400 }
-      );
+    if (archivo.size === 0) {
+      return NextResponse.json({ error: 'El archivo está vacío' }, { status: 400 });
+    }
+    if (archivo.size > TOPE_SUBIDA_BYTES) {
+      return NextResponse.json({ error: MENSAJE_TOPE_SUBIDA }, { status: 413 });
     }
     const mime = normalizeMimeType(archivo.type);
     if (!mime)
@@ -67,6 +71,45 @@ export async function POST(request: Request) {
       path: ruta,
       vista_previa: firmado?.signedUrl ?? null,
     });
+  } catch (err) {
+    return toErrorResponse(err);
+  }
+}
+
+/**
+ * DELETE /api/whatsapp/subir-adjunto  (vendedor o dirección; JSON `{ path }`)
+ *
+ * Borra un borrador de adjunto que no se mandó. Antes lo borraba el navegador
+ * con su sesión, y el bucket privado no tiene políticas de escritura (no
+ * borraba nada). Solo rutas de borrador de ESTA cuenta, y solo si ningún
+ * mensaje lo usa: si no, un vendedor podría borrar el adjunto de un mensaje
+ * ya enviado (o que quedó en `failed`, que lo sigue mostrando).
+ */
+export async function DELETE(request: Request) {
+  try {
+    const { accountId } = await requireRole('agent');
+    const body = (await request.json().catch(() => null)) as { path?: unknown } | null;
+    const ruta = typeof body?.path === 'string' ? body.path : '';
+    if (!RUTA_BORRADOR.test(ruta) || !ruta.startsWith(`account-${accountId}/outbound/`)) {
+      return NextResponse.json({ error: 'Ese archivo no se puede borrar desde aquí.' }, { status: 400 });
+    }
+    const admin = supabaseAdmin();
+    const { data: usado, error: usadoErr } = await admin
+      .from('messages')
+      .select('id')
+      .eq('media_url', urlInternaAdjunto(ruta))
+      .limit(1);
+    if (usadoErr) {
+      return NextResponse.json({ error: 'No se pudo revisar el archivo.' }, { status: 500 });
+    }
+    if (usado && usado.length > 0) {
+      return NextResponse.json({ error: 'Ese archivo ya está en un mensaje.' }, { status: 409 });
+    }
+    const { error } = await admin.storage.from(BUCKET_ADJUNTOS).remove([ruta]);
+    if (error) {
+      return NextResponse.json({ error: `No se pudo borrar: ${error.message}` }, { status: 500 });
+    }
+    return NextResponse.json({ borrado: true });
   } catch (err) {
     return toErrorResponse(err);
   }
