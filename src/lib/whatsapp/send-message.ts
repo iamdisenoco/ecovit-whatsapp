@@ -19,6 +19,7 @@
 // without duplicating ~250 lines of Meta plumbing.
 // ============================================================
 
+import { randomUUID } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import {
@@ -34,7 +35,10 @@ import {
   interactivePayloadPreviewText,
   type InteractiveMessagePayload,
 } from '@/lib/whatsapp/interactive';
-import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption';
+import { leerCredencialesMeta } from '@/lib/whatsapp/config-servidor';
+import { nombreProveedor } from '@/lib/whatsapp/proveedor/nombre';
+import { ErrorConfiguracion, type NombreProveedor } from '@/lib/whatsapp/proveedor/tipos';
+import { enviarPorProveedor, type PedidoEnvio } from '@/lib/whatsapp/enviar-por-proveedor';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
 import {
   phoneVariants,
@@ -95,8 +99,13 @@ export interface SendMessageParams {
 export interface SendMessageResult {
   /** Our `messages.id` (the persisted row). */
   messageId: string;
-  /** Meta's `wamid` for the delivered message. */
+  /** Meta's `wamid` for the delivered message ('' mientras está pendiente). */
   whatsappMessageId: string;
+  /**
+   * ECOVIT · bloque 5: el proveedor respondió 5xx o no respondió. NO se
+   * reintenta; la fila queda en `sending` y la resuelve el webhook.
+   */
+  pendiente?: boolean;
 }
 
 /**
@@ -258,37 +267,19 @@ export async function sendMessageToConversation(
   const hasValidPhone = resolvedTarget.isPhone;
   const sanitizedPhone = hasValidPhone ? sendTarget : '';
 
-  // WhatsApp config, account-scoped.
-  const { data: config, error: configError } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', accountId)
-    .single();
-
-  if (configError || !config) {
+  // ECOVIT · bloque 5: qué proveedor manda (RF-M03.8). Las credenciales de Meta
+  // se leen con la clave de servicio y columnas nombradas: con la sesión,
+  // `whatsapp_config.access_token` da 42501 (0110, B9). El auto-arreglo del
+  // cifrado viejo (CBC) de wacrm se fue: escribía el token con la sesión.
+  let proveedor: NombreProveedor;
+  try {
+    proveedor = nombreProveedor();
+  } catch (err) {
     throw new SendMessageError(
       'whatsapp_not_configured',
-      'WhatsApp not configured. Please set up your WhatsApp integration first.',
-      400
+      err instanceof ErrorConfiguracion ? err.message : String(err),
+      500
     );
-  }
-
-  const accessToken = decrypt(config.access_token);
-
-  // Self-heal legacy CBC ciphertexts. Fire-and-forget; idempotent.
-  if (isLegacyFormat(config.access_token)) {
-    void db
-      .from('whatsapp_config')
-      .update({ access_token: encrypt(accessToken) })
-      .eq('id', config.id)
-      .then(({ error }: { error: { message: string } | null }) => {
-        if (error) {
-          console.warn(
-            '[send-message] access_token GCM upgrade failed:',
-            error.message
-          );
-        }
-      });
   }
 
   // Resolve the reply target to its Meta message_id. The parent must
@@ -343,107 +334,161 @@ export async function sendMessageToConversation(
     sendLanguage = resolved.language;
   }
 
-  const attempt = async (phone: string): Promise<string> => {
-    if (messageType === 'template') {
-      const result = await sendTemplateMessage({
-        phoneNumberId: config.phone_number_id,
-        accessToken,
-        to: phone,
-        templateName: templateName!,
-        language: sendLanguage,
-        template: templateRow ?? undefined,
-        messageParams: templateMessageParams ?? undefined,
-        params: templateParams || [],
-        contextMessageId,
-      });
-      return result.messageId;
-    }
-    if (isMediaKind) {
-      const result = await sendMediaMessage({
-        phoneNumberId: config.phone_number_id,
-        accessToken,
-        to: phone,
-        kind: messageType as MediaKind,
-        link: mediaUrl!,
-        caption: contentText || undefined,
-        filename: filename || undefined,
-        contextMessageId,
-      });
-      return result.messageId;
-    }
+  // El id de NUESTRO mensaje va antes del envío: es la clave de idempotencia.
+  const idMensaje = randomUUID();
+  let waMessageId = '';
+  let workingPhone = sendTarget;
+  let pendiente = false;
+
+  if (proveedor !== 'meta') {
     if (messageType === 'interactive') {
-      const p = interactivePayload!;
-      if (p.kind === 'buttons') {
-        const result = await sendInteractiveButtons({
-          phoneNumberId: config.phone_number_id,
+      // TODO(zernio): botones y listas, sin verificar con Zernio (plan-wacrm).
+      throw new SendMessageError(
+        'no_soportado',
+        'Los botones y las listas todavía no se envían por este proveedor.',
+        400
+      );
+    }
+    const pedido: PedidoEnvio =
+      messageType === 'template'
+        ? {
+            clase: 'plantilla',
+            nombre: templateName!,
+            idioma: sendLanguage,
+            parametros: templateBodyParams(templateParams, templateMessageParams),
+          }
+        : isMediaKind
+          ? {
+              clase: 'media',
+              tipo: messageType as MediaKind,
+              url: mediaUrl!,
+              texto: contentText || null,
+              nombreArchivo: filename || null,
+            }
+          : { clase: 'texto', texto: contentText! };
+    const r = await enviarPorProveedor({
+      conversationId,
+      telefono: sendTarget,
+      idMensaje,
+      responderA: contextMessageId ?? null,
+      pedido,
+    });
+    if (r.estado === 'fallido') {
+      throw new SendMessageError(r.codigo, r.motivo, r.status);
+    }
+    if (r.estado === 'pendiente') pendiente = true;
+    else waMessageId = r.mensajeId;
+  } else {
+    const config = await leerCredencialesMeta(accountId);
+    if (!config) {
+      throw new SendMessageError(
+        'whatsapp_not_configured',
+        'WhatsApp not configured. Please set up your WhatsApp integration first.',
+        400
+      );
+    }
+    const accessToken = config.accessToken;
+
+    const attempt = async (phone: string): Promise<string> => {
+      if (messageType === 'template') {
+        const result = await sendTemplateMessage({
+          phoneNumberId: config.phoneNumberId,
           accessToken,
           to: phone,
-          bodyText: p.body,
-          headerText: p.header || undefined,
-          footerText: p.footer || undefined,
-          buttons: p.buttons,
+          templateName: templateName!,
+          language: sendLanguage,
+          template: templateRow ?? undefined,
+          messageParams: templateMessageParams ?? undefined,
+          params: templateParams || [],
           contextMessageId,
         });
         return result.messageId;
       }
-      const result = await sendInteractiveList({
-        phoneNumberId: config.phone_number_id,
+      if (isMediaKind) {
+        const result = await sendMediaMessage({
+          phoneNumberId: config.phoneNumberId,
+          accessToken,
+          to: phone,
+          kind: messageType as MediaKind,
+          link: mediaUrl!,
+          caption: contentText || undefined,
+          filename: filename || undefined,
+          contextMessageId,
+        });
+        return result.messageId;
+      }
+      if (messageType === 'interactive') {
+        const p = interactivePayload!;
+        if (p.kind === 'buttons') {
+          const result = await sendInteractiveButtons({
+            phoneNumberId: config.phoneNumberId,
+            accessToken,
+            to: phone,
+            bodyText: p.body,
+            headerText: p.header || undefined,
+            footerText: p.footer || undefined,
+            buttons: p.buttons,
+            contextMessageId,
+          });
+          return result.messageId;
+        }
+        const result = await sendInteractiveList({
+          phoneNumberId: config.phoneNumberId,
+          accessToken,
+          to: phone,
+          bodyText: p.body,
+          buttonLabel: p.button_label,
+          headerText: p.header || undefined,
+          footerText: p.footer || undefined,
+          sections: p.sections,
+          contextMessageId,
+        });
+        return result.messageId;
+      }
+      const result = await sendTextMessage({
+        phoneNumberId: config.phoneNumberId,
         accessToken,
         to: phone,
-        bodyText: p.body,
-        buttonLabel: p.button_label,
-        headerText: p.header || undefined,
-        footerText: p.footer || undefined,
-        sections: p.sections,
+        text: contentText!,
         contextMessageId,
       });
       return result.messageId;
-    }
-    const result = await sendTextMessage({
-      phoneNumberId: config.phone_number_id,
-      accessToken,
-      to: phone,
-      text: contentText!,
-      contextMessageId,
-    });
-    return result.messageId;
-  };
+    };
 
-  // Send via Meta — retry across phone-number variants if Meta rejects
-  // with "recipient not in allowed list"; persist a working variant
-  // back to the contact so the next send goes straight through.
-  let waMessageId = '';
-  let workingPhone = sendTarget;
-  try {
-    // Variants only make sense for a phone number — a BSUID is opaque
-    // and has exactly one correct form, so it gets a single attempt.
-    const variants = hasValidPhone ? phoneVariants(sanitizedPhone) : [sendTarget];
-    let lastError: unknown = null;
+    // Send via Meta — retry across phone-number variants if Meta rejects
+    // with "recipient not in allowed list"; persist a working variant
+    // back to the contact so the next send goes straight through.
+    try {
+      // Variants only make sense for a phone number — a BSUID is opaque
+      // and has exactly one correct form, so it gets a single attempt.
+      const variants = hasValidPhone ? phoneVariants(sanitizedPhone) : [sendTarget];
+      let lastError: unknown = null;
 
-    for (const variant of variants) {
-      try {
-        waMessageId = await attempt(variant);
-        workingPhone = variant;
-        lastError = null;
-        break;
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (!isRecipientNotAllowedError(message)) {
-          throw err;
+      for (const variant of variants) {
+        try {
+          waMessageId = await attempt(variant);
+          workingPhone = variant;
+          lastError = null;
+          break;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (!isRecipientNotAllowedError(message)) {
+            throw err;
+          }
+          lastError = err;
+          console.warn(
+            `[send-message] variant "${variant}" rejected by Meta, trying next…`
+          );
         }
-        lastError = err;
-        console.warn(
-          `[send-message] variant "${variant}" rejected by Meta, trying next…`
-        );
       }
-    }
 
-    if (lastError) throw lastError;
-  } catch (err) {
-    const message =
-      err instanceof Error ? err.message : 'Unknown Meta API error';
-    console.error('[send-message] Meta send failed for all variants:', message);
-    throw new SendMessageError('meta_error', `Meta API error: ${message}`, 502);
+      if (lastError) throw lastError;
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Unknown Meta API error';
+      console.error('[send-message] Meta send failed for all variants:', message);
+      throw new SendMessageError('meta_error', `Meta API error: ${message}`, 502);
+    }
   }
 
   // ECOVIT (bloque 3): `contacts.phone` ya no se escribe con la sesión de la
@@ -481,6 +526,7 @@ export async function sendMessageToConversation(
   const { data: messageRecord, error: msgError } = await db
     .from('messages')
     .insert({
+      id: idMensaje,
       conversation_id: conversationId,
       sender_type: 'agent',
       sender_id: senderId ?? null,
@@ -493,8 +539,9 @@ export async function sendMessageToConversation(
       template_name: templateName || null,
       interactive_payload:
         messageType === 'interactive' ? interactivePayload : null,
-      message_id: waMessageId,
-      status: 'sent',
+      // Pendiente: sin wamid y en `sending`; el webhook lo concilia o lo marca fallido.
+      message_id: pendiente ? null : waMessageId,
+      status: pendiente ? 'sending' : 'sent',
       reply_to_message_id: replyToMessageId || null,
     })
     .select()
@@ -509,7 +556,9 @@ export async function sendMessageToConversation(
     );
   }
 
-  await applyPendingMessageStatuses(supabaseAdmin(), accountId, waMessageId);
+  if (!pendiente) {
+    await applyPendingMessageStatuses(supabaseAdmin(), accountId, waMessageId);
+  }
 
   const lastMessageText =
     messageType === 'interactive'
@@ -548,5 +597,5 @@ export async function sendMessageToConversation(
     );
   }
 
-  return { messageId: messageRecord.id, whatsappMessageId: waMessageId };
+  return { messageId: messageRecord.id, whatsappMessageId: waMessageId, pendiente };
 }

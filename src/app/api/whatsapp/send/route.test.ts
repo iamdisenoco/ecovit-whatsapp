@@ -156,6 +156,18 @@ vi.mock('@/lib/flows/admin-client', () => ({
   }),
 }))
 
+// ECOVIT · bloque 5: las credenciales de Meta se leen con la clave de servicio.
+vi.mock('@/lib/whatsapp/config-servidor', () => ({
+  leerCredencialesMeta: async () => ({
+    configId: 'cfg-1',
+    phoneNumberId: 'pn-1',
+    wabaId: null,
+    accessToken: 'token',
+    status: 'connected',
+    userId: 'u-1',
+  }),
+}))
+
 vi.mock('@/lib/whatsapp/encryption', () => ({
   decrypt: vi.fn(() => 'plaintext-token'),
   encrypt: vi.fn(() => 'enc-token'),
