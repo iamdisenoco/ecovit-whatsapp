@@ -1,9 +1,10 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { ChevronDown, Plus, Radio, UserPlus, Zap } from 'lucide-react'
+import { ChevronDown, Plus, Radio, Zap } from 'lucide-react'
 import { useTranslations } from 'next-intl'
 
+import { useCan } from '@/hooks/use-can'
 import { buttonVariants } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -23,10 +24,12 @@ import { Skeleton } from './skeleton'
 import { useFormatDuration } from './use-format-duration'
 import { WhatsAppHealthChip } from './whatsapp-health-chip'
 
+// ECOVIT: sin «Nuevo contacto» (los contactos los crea el webhook y los de
+// verdad viven en Clientes de ECOVIT), y «Nueva automatización» solo para la
+// dirección (migración 0112).
 const NEW_ITEMS = [
-  { key: 'newContact', href: '/contacts', icon: UserPlus },
-  { key: 'newBroadcast', href: '/broadcasts/new', icon: Radio },
-  { key: 'newAutomation', href: '/automations/new', icon: Zap },
+  { key: 'newBroadcast', href: '/broadcasts/new', icon: Radio, soloDireccion: false },
+  { key: 'newAutomation', href: '/automations/new', icon: Zap, soloDireccion: true },
 ] as const
 
 function partOfDay(date: Date): 'morning' | 'afternoon' | 'evening' {
@@ -51,6 +54,7 @@ export function OverviewHeader({
 }) {
   const t = useTranslations('Dashboard.overview.header')
   const router = useRouter()
+  const esDireccion = useCan('manage-engines')
   const formatDuration = useFormatDuration()
   const firstName = name?.trim().split(/\s+/)[0] || null
 
@@ -103,7 +107,7 @@ export function OverviewHeader({
             <ChevronDown className="opacity-70" aria-hidden />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
-            {NEW_ITEMS.map(({ key, href, icon: Icon }) => (
+            {NEW_ITEMS.filter((i) => esDireccion || !i.soloDireccion).map(({ key, href, icon: Icon }) => (
               <DropdownMenuItem key={key} onClick={() => router.push(href)}>
                 <Icon aria-hidden />
                 {t(key)}

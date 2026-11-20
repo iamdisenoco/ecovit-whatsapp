@@ -50,10 +50,10 @@ export async function GET() {
 
 export async function POST(request: Request) {
   // Creating a flow is a write — the RLS flows_insert policy requires
-  // `agent`, but this route inserts via the service-role client which
-  // bypasses RLS, so the role must be enforced here.
+  // `admin` (migración 0112 de ECOVIT), but this route inserts via the
+  // service-role client which bypasses RLS, so the role must be enforced here.
   try {
-    await requireRole('agent')
+    await requireRole('admin') // ECOVIT (0112): flujos y automatizaciones, solo la dirección
   } catch (err) {
     return toErrorResponse(err)
   }

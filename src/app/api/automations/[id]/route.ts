@@ -69,11 +69,11 @@ export async function PATCH(
   const { id } = await params
 
   // Editing an automation is a write — the RLS automations_update policy
-  // requires `agent`, but this route mutates via the service-role client
+  // requires `admin` (ECOVIT 0112), but this route mutates via the service-role client
   // which bypasses RLS, so enforce the role here.
   let accountId: string
   try {
-    const ctx = await requireRole('agent')
+    const ctx = await requireRole('admin') // ECOVIT (0112): flujos y automatizaciones, solo la dirección
     accountId = ctx.accountId
   } catch (err) {
     return toErrorResponse(err)
@@ -157,11 +157,11 @@ export async function DELETE(
 ) {
   const { id } = await params
 
-  // Deleting an automation is a write — enforce `agent` (the service-role
-  // client below bypasses the agent-gated automations_delete RLS).
+  // Deleting an automation is a write — enforce `admin` (ECOVIT 0112) (the service-role
+  // client below bypasses the admin-gated automations_delete RLS).
   let accountId: string
   try {
-    const ctx = await requireRole('agent')
+    const ctx = await requireRole('admin') // ECOVIT (0112): flujos y automatizaciones, solo la dirección
     accountId = ctx.accountId
   } catch (err) {
     return toErrorResponse(err)

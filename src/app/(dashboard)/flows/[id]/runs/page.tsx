@@ -16,6 +16,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useCan } from "@/hooks/use-can";
 import { format, formatDistance } from "date-fns";
 
 import { useLocale, useTranslations } from "next-intl";
@@ -101,6 +102,8 @@ export default function FlowRunsPage() {
   const params = useParams<{ id: string }>();
   const t = useTranslations("Flows.logs");
   const tEdit = useTranslations("Flows.edit");
+  // ECOVIT (0112): el editor es solo de la dirección; el vendedor vuelve a la lista.
+  const puedeEditar = useCan("manage-engines");
 
   const [flow, setFlow] = useState<{ id: string; name: string } | null>(null);
   const [runs, setRuns] = useState<RunRow[]>([]);
@@ -179,7 +182,7 @@ export default function FlowRunsPage() {
     <div className="mx-auto max-w-4xl p-6">
       <button
         type="button"
-        onClick={() => router.push(`/flows/${flow.id}`)}
+        onClick={() => router.push(puedeEditar ? `/flows/${flow.id}` : "/flows")}
         className="mb-2 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft className="h-3 w-3" />

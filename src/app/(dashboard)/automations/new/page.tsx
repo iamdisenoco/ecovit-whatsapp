@@ -9,6 +9,7 @@ import {
   type BuilderStep,
 } from "@/components/automations/automation-builder"
 import { AUTOMATION_TEMPLATES, type TemplateSlug } from "@/lib/automations/templates"
+import { SoloConPermiso } from "@/components/auth/solo-con-permiso"
 import { browserTimeZone, withConditionTimezone } from "@/lib/automations/time-of-day"
 import type { AutomationStepType, AutomationTriggerType } from "@/types"
 
@@ -16,10 +17,13 @@ import type { AutomationStepType, AutomationTriggerType } from "@/types"
 // bails to CSR and errors out. Thin wrapper supplies it; the inner
 // component reads the `?template=` query string.
 export default function NewAutomationPage() {
+  // ECOVIT (0112): crear automatizaciones es solo de la dirección.
   return (
-    <Suspense fallback={null}>
-      <NewAutomationPageInner />
-    </Suspense>
+    <SoloConPermiso accion="manage-engines" destino="/automations">
+      <Suspense fallback={null}>
+        <NewAutomationPageInner />
+      </Suspense>
+    </SoloConPermiso>
   )
 }
 

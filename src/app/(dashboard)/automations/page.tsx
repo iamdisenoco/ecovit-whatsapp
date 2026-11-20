@@ -60,7 +60,9 @@ const TEMPLATE_ICON: Record<TemplateSlug, typeof Zap> = {
 
 export default function AutomationsPage() {
   const router = useRouter()
-  const canCreate = useCan("send-messages")
+  // ECOVIT (0112): crear, editar, activar, duplicar y borrar es solo de la
+  // dirección. El vendedor ve la lista y el registro de cada una.
+  const canManage = useCan("manage-engines")
   const t = useTranslations("Automations.list")
   const tGate = useTranslations("GatedButton")
   const [automations, setAutomations] = useState<Automation[] | null>(null)
@@ -157,7 +159,7 @@ export default function AutomationsPage() {
     )
   }
 
-  const showTemplates = automations.length < 3
+  const showTemplates = canManage && automations.length < 3
 
   return (
     <div className="space-y-6">
@@ -168,15 +170,17 @@ export default function AutomationsPage() {
             {t("subtitle")}
           </p>
         </div>
-        <GatedButton
-          canAct={canCreate}
-          gateReason={tGate("reasons.createAutomations")}
-          onClick={() => router.push("/automations/new")}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
-        >
-          <Plus className="h-4 w-4" />
-          {t("create")}
-        </GatedButton>
+        {canManage && (
+          <GatedButton
+            canAct={canManage}
+            gateReason={tGate("reasons.createAutomations")}
+            onClick={() => router.push("/automations/new")}
+            className="bg-primary text-primary-foreground hover:bg-primary/90"
+          >
+            <Plus className="h-4 w-4" />
+            {t("create")}
+          </GatedButton>
+        )}
       </div>
 
       {showTemplates && (
@@ -220,8 +224,11 @@ export default function AutomationsPage() {
             <AutomationCard
               key={a.id}
               automation={a}
+              canManage={canManage}
               onToggle={(next) => toggleActive(a, next)}
-              onEdit={() => router.push(`/automations/${a.id}/edit`)}
+              onEdit={() =>
+                router.push(canManage ? `/automations/${a.id}/edit` : `/automations/${a.id}/logs`)
+              }
               onDuplicate={() => duplicate(a)}
               onLogs={() => router.push(`/automations/${a.id}/logs`)}
               onDelete={() => setPendingDelete(a)}
@@ -264,6 +271,7 @@ export default function AutomationsPage() {
 
 function AutomationCard({
   automation,
+  canManage,
   onToggle,
   onEdit,
   onDuplicate,
@@ -272,6 +280,7 @@ function AutomationCard({
   t,
 }: {
   automation: Automation
+  canManage: boolean
   onToggle: (next: boolean) => void
   onEdit: () => void
   onDuplicate: () => void
@@ -336,6 +345,7 @@ function AutomationCard({
         <div className="flex items-center gap-3">
           <Switch
             checked={automation.is_active}
+            disabled={!canManage}
             onCheckedChange={(v) => onToggle(!!v)}
             aria-label={automation.is_active ? t("deactivate") : t("activate")}
           />
@@ -348,23 +358,31 @@ function AutomationCard({
               <MoreVertical className="h-4 w-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={onEdit}>
-                <Pencil className="h-4 w-4" />
-                {t("edit")}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={onDuplicate}>
-                <Copy className="h-4 w-4" />
-                {t("duplicate")}
-              </DropdownMenuItem>
+              {canManage && (
+                <>
+                  <DropdownMenuItem onClick={onEdit}>
+                    <Pencil className="h-4 w-4" />
+                    {t("edit")}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={onDuplicate}>
+                    <Copy className="h-4 w-4" />
+                    {t("duplicate")}
+                  </DropdownMenuItem>
+                </>
+              )}
               <DropdownMenuItem onClick={onLogs}>
                 <FileText className="h-4 w-4" />
                 {t("viewLogs")}
               </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onClick={onDelete}>
-                <Trash2 className="h-4 w-4" />
-                {t("delete")}
-              </DropdownMenuItem>
+              {canManage && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem variant="destructive" onClick={onDelete}>
+                    <Trash2 className="h-4 w-4" />
+                    {t("delete")}
+                  </DropdownMenuItem>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

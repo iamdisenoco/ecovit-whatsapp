@@ -12,13 +12,24 @@ import {
   type ServerStepNode,
 } from "@/components/automations/automation-builder"
 import type { AutomationTriggerType } from "@/types"
+import { SoloConPermiso } from "@/components/auth/solo-con-permiso"
 
+// ECOVIT (0112): editar automatizaciones es solo de la dirección; el vendedor
+// va a su registro de ejecuciones, que sí puede leer.
 export default function EditAutomationPage({
   params,
 }: {
   params: Promise<{ id: string }>
 }) {
   const { id } = use(params)
+  return (
+    <SoloConPermiso accion="manage-engines" destino={`/automations/${id}/logs`}>
+      <EditAutomationPageInner id={id} />
+    </SoloConPermiso>
+  )
+}
+
+function EditAutomationPageInner({ id }: { id: string }) {
   const router = useRouter()
   const t = useTranslations("Automations.edit")
   const [initial, setInitial] = useState<BuilderInitial | null>(null)

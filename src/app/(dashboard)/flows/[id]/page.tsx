@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import { useTranslations } from "next-intl";
 
+import { SoloConPermiso } from "@/components/auth/solo-con-permiso";
 import { FlowEditorShell } from "@/components/flows/flow-editor-shell";
 import type { FlowRow, FlowNodeRow } from "@/lib/flows/types";
 
@@ -22,7 +23,18 @@ import type { FlowRow, FlowNodeRow } from "@/lib/flows/types";
  * 404s on a flow id the caller doesn't own (RLS), which becomes the
  * "Flow not found" state below.
  */
+// ECOVIT (0112): editar flujos es solo de la dirección; el vendedor va a las
+// ejecuciones del flujo, que sí puede leer.
 export default function FlowEditorPage() {
+  const params = useParams<{ id: string }>();
+  return (
+    <SoloConPermiso accion="manage-engines" destino={`/flows/${params.id}/runs`}>
+      <FlowEditorPageInner />
+    </SoloConPermiso>
+  );
+}
+
+function FlowEditorPageInner() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const t = useTranslations("Flows.edit");

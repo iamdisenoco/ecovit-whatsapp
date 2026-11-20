@@ -16,6 +16,7 @@ import {
   HelpCircle,
   UserPlus,
   FileText,
+  ListChecks,
 } from "lucide-react";
 
 import { useTranslations } from "next-intl";
@@ -84,7 +85,9 @@ const TEMPLATE_ICONS = {
 
 export default function FlowsPage() {
   const router = useRouter();
-  const canCreate = useCan("send-messages");
+  // ECOVIT (0112): crear, editar y borrar flujos es solo de la dirección. El
+  // vendedor ve la lista y las ejecuciones de cada uno.
+  const canCreate = useCan("manage-engines");
   const t = useTranslations("Flows.list");
   const tGate = useTranslations("GatedButton");
   const [flows, setFlows] = useState<FlowRow[]>([]);
@@ -214,14 +217,16 @@ export default function FlowsPage() {
             {t("description")}
           </p>
         </div>
-        <GatedButton
-          canAct={canCreate}
-          gateReason={tGate("reasons.createFlows")}
-          onClick={() => setCreateOpen(true)}
-        >
-          <Plus className="h-4 w-4" />
-          {t("newFlow")}
-        </GatedButton>
+        {canCreate && (
+          <GatedButton
+            canAct={canCreate}
+            gateReason={tGate("reasons.createFlows")}
+            onClick={() => setCreateOpen(true)}
+          >
+            <Plus className="h-4 w-4" />
+            {t("newFlow")}
+          </GatedButton>
+        )}
       </header>
 
       {flows.length === 0 ? (
@@ -236,7 +241,9 @@ export default function FlowsPage() {
             <FlowCard
               key={flow.id}
               flow={flow}
+              canManage={canCreate}
               onEdit={() => router.push(`/flows/${flow.id}`)}
+              onRuns={() => router.push(`/flows/${flow.id}/runs`)}
               onDelete={() => handleDelete(flow)}
               t={t}
             />
@@ -345,27 +352,33 @@ function EmptyState({
       <p className="mt-1 max-w-md text-sm text-muted-foreground">
         {t("emptyDesc")}
       </p>
-      <GatedButton
-        canAct={canCreate}
-        gateReason={tGate("reasons.createFlows")}
-        onClick={onCreate}
-        className="mt-5"
-      >
-        <Plus className="h-4 w-4" />
-        {t("createFirst")}
-      </GatedButton>
+      {canCreate && (
+        <GatedButton
+          canAct={canCreate}
+          gateReason={tGate("reasons.createFlows")}
+          onClick={onCreate}
+          className="mt-5"
+        >
+          <Plus className="h-4 w-4" />
+          {t("createFirst")}
+        </GatedButton>
+      )}
     </div>
   );
 }
 
 function FlowCard({
   flow,
+  canManage,
   onEdit,
+  onRuns,
   onDelete,
   t,
 }: {
   flow: FlowRow;
+  canManage: boolean;
   onEdit: () => void;
+  onRuns: () => void;
   onDelete: () => void;
   t: ReturnType<typeof useTranslations>;
 }) {
@@ -409,19 +422,28 @@ function FlowCard({
       </div>
 
       <div className="mt-4 flex items-center justify-end gap-2 border-t border-border pt-3">
-        <Button variant="ghost" size="sm" onClick={onEdit}>
-          <Pencil className="h-3.5 w-3.5" />
-          {t("edit")}
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onDelete}
-          className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-          {t("delete")}
-        </Button>
+        {canManage ? (
+          <>
+            <Button variant="ghost" size="sm" onClick={onEdit}>
+              <Pencil className="h-3.5 w-3.5" />
+              {t("edit")}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onDelete}
+              className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              {t("delete")}
+            </Button>
+          </>
+        ) : (
+          <Button variant="ghost" size="sm" onClick={onRuns}>
+            <ListChecks className="h-3.5 w-3.5" />
+            Ver ejecuciones
+          </Button>
+        )}
       </div>
     </div>
   );

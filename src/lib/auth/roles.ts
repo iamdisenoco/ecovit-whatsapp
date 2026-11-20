@@ -90,6 +90,26 @@ export function canSendMessages(role: AccountRole): boolean {
 }
 
 /**
+ * ECOVIT (migración 0112): flujos y automatizaciones corren con la clave de
+ * servicio y pueden asignar chats, así que crearlos, editarlos, activarlos,
+ * duplicarlos, borrarlos o dispararlos a mano es solo de la dirección
+ * (`admin`). El vendedor (`agent`) los lee.
+ */
+export function canManageEngines(role: AccountRole): boolean {
+  return hasMinRole(role, "admin");
+}
+
+/**
+ * ECOVIT (bloque 3): la pantalla de Contactos de wacrm queda para la
+ * dirección (etiquetas y campos para los envíos). El vendedor ve el número
+ * y su cliente de ECOVIT en el panel del chat; los contactos de verdad viven
+ * en Clientes de ECOVIT.
+ */
+export function canViewContactsScreen(role: AccountRole): boolean {
+  return hasMinRole(role, "admin");
+}
+
+/**
  * Viewer: read-only across everything. Provided as a positive
  * predicate so UI gates read naturally (`if (canViewOnly(role))`
  * shows the "Read-only" tooltip without inverting `canSendMessages`).

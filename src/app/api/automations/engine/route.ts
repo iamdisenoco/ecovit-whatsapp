@@ -10,12 +10,13 @@ import type { AutomationTriggerType } from '@/types'
  * account_id and dispatch over the account's automations.
  */
 export async function POST(request: Request) {
-  // Firing automations sends outbound WhatsApp — a write action. Require
-  // at least `agent`; a viewer must not be able to trigger sends.
+  // Firing automations sends outbound WhatsApp and can assign chats with
+  // the service key. ECOVIT (0112): only `admin` (la dirección) fires them
+  // by hand; a vendedor must not bypass tomar/asignar_conversacion.
   let accountId: string
   let userId: string
   try {
-    const ctx = await requireRole('agent')
+    const ctx = await requireRole('admin') // ECOVIT (0112): flujos y automatizaciones, solo la dirección
     accountId = ctx.accountId
     userId = ctx.userId
   } catch (err) {
