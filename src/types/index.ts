@@ -127,6 +127,15 @@ export interface Contact {
   avatar_url?: string;
   created_at: string;
   updated_at: string;
+  /** ECOVIT (0110/0111): el cliente y el contacto de ECOVIT con el mismo
+   *  teléfono E.164. Los escribe solo la base; nunca se mandan desde aquí. */
+  cliente_id?: string | null;
+  contacto_id?: string | null;
+  telefono_e164?: string | null;
+  /** enlazado · sin_contacto · varios · telefono_invalido · error (0111). */
+  enlace_estado?: string | null;
+  enlace_detalle?: string | null;
+  enlazado_en?: string | null;
   /** Hydrated by queries that embed `contact_tags(tags(*))` (e.g. the
    *  Inbox conversation list, for tag filtering). Absent otherwise. */
   tags?: Tag[];
@@ -384,7 +393,8 @@ export interface MessageTemplate {
 }
 
 // ECOVIT: sin `Pipeline`, `PipelineStage` ni `Deal`: la base no tiene esas tablas.
-// TODO bloque 3: oportunidades de ECOVIT.
+// Las oportunidades de ECOVIT se leen con `cliente_de_conversacion` (bloque 3,
+// `lib/ecovit/panel-cliente.ts`).
 
 export type BroadcastStatus = 'draft' | 'scheduled' | 'sending' | 'sent' | 'failed';
 export type RecipientStatus = 'pending' | 'sent' | 'delivered' | 'read' | 'replied' | 'failed';

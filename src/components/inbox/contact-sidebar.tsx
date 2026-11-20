@@ -13,7 +13,6 @@ import {
   Check,
   User,
   Tag as TagIcon,
-  DollarSign,
   StickyNote,
   Plus,
   X,
@@ -35,12 +34,15 @@ import { useLocale, useTranslations } from "next-intl";
 import { getDateLocale } from "@/i18n/date-locale";
 import { contactHandle } from "@/lib/whatsapp/wa-identity";
 import { addContactTag, deleteContactTag } from "@/lib/contacts/tag-api";
+import { PanelEcovit } from "@/components/inbox/panel-ecovit";
 
 interface ContactSidebarProps {
   contact: Contact | null;
+  /** ECOVIT: para leer el cliente con `cliente_de_conversacion`. */
+  conversationId: string | null;
 }
 
-export function ContactSidebar({ contact }: ContactSidebarProps) {
+export function ContactSidebar({ contact, conversationId }: ContactSidebarProps) {
   const tSidebar = useTranslations("Inbox.sidebar");
   const dateLocale = getDateLocale(useLocale());
   const tThread = useTranslations("Inbox.messageThread");
@@ -304,17 +306,9 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
           {/* Divider */}
           <div className="my-4 border-t border-border" />
 
-          {/* Oportunidades de ECOVIT. TODO bloque 3: el cliente enlazado por
-              teléfono y sus oportunidades, con «Crear oportunidad». */}
-          <div>
-            <div className="flex items-center gap-2 px-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              <DollarSign className="h-3 w-3" />
-              Oportunidades
-            </div>
-            <p className="mt-2 px-1 text-xs text-muted-foreground">
-              Pronto vas a ver aquí las oportunidades de ECOVIT de este cliente.
-            </p>
-          </div>
+          {/* ECOVIT (bloque 3): el cliente enlazado por teléfono, su
+              vendedor y sus oportunidades abiertas. */}
+          <PanelEcovit conversationId={conversationId} contact={contact} />
 
           {/* Divider */}
           <div className="my-4 border-t border-border" />
