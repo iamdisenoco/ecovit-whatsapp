@@ -194,8 +194,8 @@ describe('pasa a una persona', () => {
     await atenderConBot(deps(), 'c1');
     const p = rpcs.find((x) => x.fn === 'pasar_a_vendedor_wa');
     expect(p?.args).toMatchObject({ p_motivo: 'descuento', p_resumen: 'Pide 15 % por 200 FX-1' });
-    expect(enviados).toEqual([`${TEXTOS.T5.plantilla}\n\n${t3PasoConAsesor('Carlos', 'descuento')}`]);
-    expect(enviados[0]).toContain('Lo de descuento queda pendiente');
+    expect(enviados).toEqual([`${TEXTOS.T5.plantilla}\n\n${t3PasoConAsesor('Carlos')}`]);
+    expect(enviados[0]).not.toMatch(/pendiente|aprobaci[oó]n|orientativo|cotizaci[oó]n formal/i);
   });
 
   it('sin cartera (en espera): T3 sin nombre propio', async () => {

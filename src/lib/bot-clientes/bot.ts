@@ -151,7 +151,7 @@ export function textoAlPasar(motivo: string, asesor: string, fuera: boolean): st
   const t3 =
     fuera && textoAprobado('T11') && HORARIO_ECOVIT
       ? TEXTOS.T11.plantilla.replace('{asesor}', asesor).replace('{horario}', HORARIO_ECOVIT.texto)
-      : t3PasoConAsesor(asesor, motivo);
+      : t3PasoConAsesor(asesor);
   if (motivo === 'descuento' || motivo === 'volumen' || motivo === 'credito') {
     return `${t5NoNegocia()}\n\n${t3}`;
   }
