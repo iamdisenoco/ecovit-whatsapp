@@ -79,12 +79,23 @@ export async function llamarClaude(args: {
       signal: AbortSignal.timeout(args.timeoutMs),
     });
   } catch (err) {
-    throw new ErrorClaude(`No se pudo hablar con Claude: ${err instanceof Error ? err.message : String(err)}`, null);
+    // Corte de red o tiempo agotado: no hay `usage`. El bot anota una fila en
+    // cero para que quede rastro de la llamada.
+    const tiempo = err instanceof DOMException && err.name === 'TimeoutError';
+    throw new ErrorClaude(
+      `${tiempo ? 'Se agotó el tiempo con Claude' : 'No se pudo hablar con Claude'}: ${err instanceof Error ? err.message : String(err)}`,
+      null
+    );
   }
   const json = (await res.json().catch(() => null)) as Record<string, unknown> | null;
   if (!res.ok) {
     const detalle = (json?.error as { message?: string } | undefined)?.message ?? '';
-    throw new ErrorClaude(`Claude respondió ${res.status}${detalle ? `: ${detalle}` : ''}`, res.status);
+    // Si la respuesta no 2xx trae `usage`, se anota: lo que se cobra cuenta para el tope.
+    throw new ErrorClaude(
+      `Claude respondió ${res.status}${detalle ? `: ${detalle}` : ''}`,
+      res.status,
+      json?.usage ?? null
+    );
   }
   if (!json || !Array.isArray(json.content)) {
     throw new ErrorClaude('Claude devolvió una respuesta sin contenido.', res.status, json?.usage ?? null);

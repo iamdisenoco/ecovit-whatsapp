@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { atenderConBot, mensajesParaClaude, paraElModelo, type DependenciasBot } from './bot';
-import { ErrorClaude, type RespuestaClaude } from './claude';
+import { ErrorClaude, llamarClaude, type RespuestaClaude } from './claude';
 import { costoUsd, leerUso } from './costo';
 import { revisarRespuesta } from './revisor';
 import { t3PasoConAsesor, t9PrecioLista, TEXTOS } from './textos';
@@ -185,12 +185,33 @@ describe('pasa a una persona', () => {
     expect(enviados).toEqual(['Listo, un asesor de ECOVIT ya tiene tu solicitud y te escribe para continuar.']);
   });
 
-  it('Claude falla: T6 y pasa, sin gasto que anotar (no hubo usage)', async () => {
-    respuestasClaude = [new ErrorClaude('Claude respondió 529', 529)];
+  it('Claude falla sin usage (red, tiempo): T6, pasa, y deja una fila de uso en cero', async () => {
+    respuestasClaude = [new ErrorClaude('Se agotó el tiempo con Claude', null)];
     await atenderConBot(deps(), 'c1');
     expect(rpcs.find((x) => x.fn === 'pasar_a_vendedor_wa')?.args.p_motivo).toBe('otro');
     expect(enviados).toEqual([TEXTOS.T6.plantilla]);
-    expect(fns()).not.toContain('registrar_uso_ia_wa');
+    expect(rpcs.find((x) => x.fn === 'registrar_uso_ia_wa')?.args).toMatchObject({
+      p_tokens_entrada: 0,
+      p_tokens_salida: 0,
+      p_costo_usd: 0,
+    });
+  });
+
+  it('Claude responde no 2xx CON usage: se anota lo cobrado', async () => {
+    respuestasClaude = [new ErrorClaude('Claude respondió 500', 500, { input_tokens: 500, output_tokens: 0 })];
+    await atenderConBot(deps(), 'c1');
+    expect(rpcs.find((x) => x.fn === 'registrar_uso_ia_wa')?.args).toMatchObject({
+      p_tokens_entrada: 500,
+      p_costo_usd: 0.001,
+    });
+  });
+
+  it('respuesta cortada (max_tokens): no se manda el texto, pasa con T6', async () => {
+    respuestasClaude = [{ stop_reason: 'max_tokens', content: [{ type: 'text', text: 'El fluxómetro FX-1 es' }], usage: uso }];
+    await atenderConBot(deps(), 'c1');
+    expect(enviados).toEqual([TEXTOS.T6.plantilla]);
+    expect(fns()).toContain('pasar_a_vendedor_wa');
+    expect(fns()).not.toContain('claim_ai_reply_slot');
   });
 
   it('una persona tomó el chat antes del paso: ni pasa ni le escribe al cliente', async () => {
@@ -200,6 +221,25 @@ describe('pasa a una persona', () => {
     expect(r).toEqual({ accion: 'silencio', motivo: 'chat_con_dueno' });
     expect(fns()).not.toContain('pasar_a_vendedor_wa');
     expect(enviados).toEqual([]);
+  });
+});
+
+describe('llamarClaude (con fetch falso)', () => {
+  it('no 2xx con usage: lanza ErrorClaude con el usage', async () => {
+    const f = (async () =>
+      new Response(JSON.stringify({ error: { message: 'x' }, usage: { input_tokens: 7 } }), { status: 500 })) as typeof fetch;
+    const err = await llamarClaude({ apiKey: 'k', sistema: 's', herramientas: [], mensajes: [], timeoutMs: 1000, fetchImpl: f }).catch((e) => e);
+    expect(err).toBeInstanceOf(ErrorClaude);
+    expect(err.usage).toEqual({ input_tokens: 7 });
+  });
+  it('manda el modelo claude-sonnet-5-5', async () => {
+    let cuerpo: Record<string, unknown> = {};
+    const f = (async (_u: unknown, init: RequestInit) => {
+      cuerpo = JSON.parse(String(init.body));
+      return new Response(JSON.stringify({ stop_reason: 'end_turn', content: [], usage: {} }), { status: 200 });
+    }) as unknown as typeof fetch;
+    await llamarClaude({ apiKey: 'k', sistema: 's', herramientas: [], mensajes: [], timeoutMs: 1000, fetchImpl: f });
+    expect(cuerpo.model).toBe('claude-sonnet-5-5');
   });
 });
 

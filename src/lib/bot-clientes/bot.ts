@@ -69,7 +69,20 @@ async function puedeContestar(db: SupabaseClient, conversationId: string): Promi
   return data as Puede;
 }
 
-async function registrarUso(db: SupabaseClient, conversationId: string, usage: unknown): Promise<void> {
+/**
+ * Una fila por llamada. Sin `usage` (corte de red, tiempo agotado) va en cero;
+ * el motivo queda en el registro del servidor, porque `registrar_uso_ia_wa`
+ * no tiene dónde guardarlo (pendiente en SQL).
+ */
+async function registrarUso(
+  db: SupabaseClient,
+  conversationId: string,
+  usage: unknown,
+  motivoSinUso?: string
+): Promise<void> {
+  if (!usage && motivoSinUso) {
+    console.warn(`[bot-clientes] llamada sin usage (${conversationId}): ${motivoSinUso}`);
+  }
   const uso = leerUso(usage);
   const { error } = await db.rpc('registrar_uso_ia_wa', {
     p_conversacion: conversationId,
@@ -234,11 +247,17 @@ export async function atenderConBot(deps: DependenciasBot, conversationId: strin
           mensajes,
         });
       } catch (err) {
-        if (err instanceof ErrorClaude && err.usage) await registrarUso(db, conversationId, err.usage);
+        // Siempre deja rastro: con el `usage` que haya, o una fila en cero.
         const detalle = err instanceof Error ? err.message : String(err);
+        await registrarUso(db, conversationId, err instanceof ErrorClaude ? err.usage : null, detalle);
         return pasarAVendedor(deps, conversationId, 'ia_caida', resumenDe(contexto, `La IA no respondió (${detalle}).`), true);
       }
       await registrarUso(db, conversationId, resp.usage);
+
+      // Cortada por el tope de tokens: el texto está a medias y no se manda.
+      if (resp.stop_reason === 'max_tokens') {
+        return pasarAVendedor(deps, conversationId, 'ia_caida', resumenDe(contexto, 'La respuesta de la IA quedó cortada.'), true);
+      }
 
       if (resp.stop_reason === 'refusal') {
         return pasarAVendedor(deps, conversationId, 'ia_caida', resumenDe(contexto, 'La IA se negó a responder.'), true);
