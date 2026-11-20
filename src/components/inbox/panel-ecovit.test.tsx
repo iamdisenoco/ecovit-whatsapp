@@ -19,12 +19,19 @@ const DATOS: ClienteDeConversacion = {
   ],
 }
 
-function pintar(estado: string | null, detalle: string | null, lectura: LecturaPanel | null, rutas = RUTAS) {
+function pintar(
+  estado: string | null,
+  detalle: string | null,
+  lectura: LecturaPanel | null,
+  rutas = RUTAS,
+  avisoSinEnlaces = false,
+) {
   const html = renderToStaticMarkup(
     React.createElement(VistaPanelEcovit, {
       vista: vistaPanel(estado, detalle, lectura),
       aviso: lectura && !lectura.ok ? lectura.error : null,
       rutas,
+      avisoSinEnlaces,
     }),
   )
   // Texto plano para buscar frases sin depender de las etiquetas.
@@ -110,11 +117,23 @@ describe('panel del cliente de ECOVIT', () => {
     expect(texto).not.toContain('Constructora')
   })
 
-  it('sin NEXT_PUBLIC_ECOVIT_URL: los datos salen, sin enlaces, y lo dice', () => {
-    const { html, texto } = pintar('enlazado', null, { ok: true, datos: DATOS }, null)
+  it('sin NEXT_PUBLIC_ECOVIT_URL, a la dirección: los datos salen, sin enlaces, y lo dice sin jerga', () => {
+    const { html, texto } = pintar('enlazado', null, { ok: true, datos: DATOS }, null, true)
     expect(texto).toContain('Constructora Andina')
     expect(html).not.toContain('href=')
-    expect(texto).toContain('falta NEXT_PUBLIC_ECOVIT_URL')
+    expect(texto).toContain('todavía no están activos')
+    expect(texto).not.toContain('NEXT_PUBLIC')
+  })
+
+  it('sin NEXT_PUBLIC_ECOVIT_URL, a un vendedor (o en la demo): no dice nada', () => {
+    const { texto } = pintar('enlazado', null, { ok: true, datos: DATOS }, null, false)
+    expect(texto).toContain('Constructora Andina')
+    expect(texto).not.toContain('todavía no están activos')
+  })
+
+  it('testigo: con enlaces no sale el aviso aunque sea la dirección', () => {
+    const { texto } = pintar('enlazado', null, { ok: true, datos: DATOS }, RUTAS, true)
+    expect(texto).not.toContain('todavía no están activos')
   })
 })
 

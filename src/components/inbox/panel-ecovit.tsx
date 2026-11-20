@@ -12,6 +12,9 @@ import {
 } from "lucide-react";
 
 import { createClient } from "@/lib/supabase/client";
+import { useAuth } from "@/hooks/use-auth";
+import { canEditSettings } from "@/lib/auth/roles";
+import { modoMuestra } from "@/lib/muestra/modo";
 import { cn } from "@/lib/utils";
 import {
   leerClienteDeConversacion,
@@ -58,10 +61,20 @@ export function PanelEcovit({
 
   const reintentar = useCallback(() => setIntento((n) => n + 1), []);
 
+  // Que falten los enlaces a ECOVIT es un tema de instalación: solo lo ve la
+  // dirección, y nunca en la demostración (sus clientes no existen allá).
+  const { accountRole } = useAuth();
+  const avisoSinEnlaces = !modoMuestra() && !!accountRole && canEditSettings(accountRole);
+
   // Sin conversación no hay qué leer: no se queda «buscando» para siempre.
   if (!conversationId) {
     return (
-      <VistaPanelEcovit vista={{ tipo: "sin_conversacion" }} aviso={null} rutas={rutasEcovit()} />
+      <VistaPanelEcovit
+        vista={{ tipo: "sin_conversacion" }}
+        aviso={null}
+        rutas={rutasEcovit()}
+        avisoSinEnlaces={avisoSinEnlaces}
+      />
     );
   }
 
@@ -70,6 +83,7 @@ export function PanelEcovit({
       vista={vistaPanel(contact.enlace_estado, contact.enlace_detalle, lectura)}
       aviso={lectura && !lectura.ok ? lectura.error : null}
       rutas={rutasEcovit()}
+      avisoSinEnlaces={avisoSinEnlaces}
       onReintentar={reintentar}
     />
   );
@@ -94,6 +108,7 @@ export function VistaPanelEcovit({
   vista,
   aviso,
   rutas,
+  avisoSinEnlaces = false,
   onReintentar,
 }: {
   vista: VistaPanel;
@@ -101,6 +116,8 @@ export function VistaPanelEcovit({
   aviso: string | null;
   /** null si falta `NEXT_PUBLIC_ECOVIT_URL`: se muestra todo, sin enlaces. */
   rutas: RutasEcovit | null;
+  /** Si sin `rutas` se le dice a quien mira que faltan los enlaces (solo la dirección). */
+  avisoSinEnlaces?: boolean;
   onReintentar?: () => void;
 }) {
   return (
@@ -142,9 +159,10 @@ export function VistaPanelEcovit({
         </p>
       )}
 
-      {!rutas && (
+      {!rutas && avisoSinEnlaces && (
         <p className="mt-2 px-1 text-[11px] text-muted-foreground">
-          Sin enlaces a ECOVIT: falta <code>NEXT_PUBLIC_ECOVIT_URL</code>.
+          Los botones para abrir este cliente en ECOVIT todavía no están activos en esta
+          instalación. Los activa quien la administra.
         </p>
       )}
     </section>
