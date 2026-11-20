@@ -49,7 +49,8 @@ interface UsageResponse {
   gasto?: {
     total_usd: number | null;
     sin_costo: number;
-    por_chat: { conversation_id: string; usd: number; llamadas: number }[];
+    /** `cliente`: nombre o teléfono del contacto; null si no se pudo leer. */
+    por_chat: { conversation_id: string; usd: number; llamadas: number; cliente?: string | null }[];
     tope_usd_mes: number | null;
     /** El mes de Bogotá (AAAA-MM) y su gasto: lo único que se compara con el tope. */
     mes?: string;
@@ -141,7 +142,8 @@ export function AiUsageCard() {
             onValueChange={(v) => setDays(Number(v))}
           >
             <SelectTrigger className="w-32 flex-shrink-0">
-              <SelectValue />
+              {/* Sin función, base-ui muestra el valor crudo («30»). */}
+              <SelectValue>{(v: string) => t('window', { days: Number(v) })}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               {WINDOWS.map((w) => (
@@ -194,7 +196,8 @@ export function AiUsageCard() {
                 colors={['violet']}
                 valueFormatter={(v) => formatCompactNumber(v)}
                 showLegend={false}
-                yAxisWidth={48}
+                // «100.0k» no cabía en 48 px y salía «00.0k».
+                yAxisWidth={64}
                 className="h-[200px]"
               />
             </div>
@@ -304,7 +307,7 @@ function GastoClaude({
             {gasto.por_chat.map((c) => (
               <li key={c.conversation_id} className="flex items-center justify-between px-3 py-2 text-sm">
                 <a href={`/inbox?c=${c.conversation_id}`} className="min-w-0 truncate text-primary hover:underline">
-                  Ver chat
+                  {c.cliente ? `Chat con ${c.cliente}` : 'Ver chat'}
                 </a>
                 <span className="flex-shrink-0 tabular-nums text-muted-foreground">
                   {usd(c.usd)} · {c.llamadas} {c.llamadas === 1 ? 'llamada' : 'llamadas'}

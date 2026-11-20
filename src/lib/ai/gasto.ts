@@ -86,3 +86,26 @@ export function sumarUsd(filas: { costo_usd: number | string | null }[]): number
   }
   return redondear(total);
 }
+
+/** Una fila de `conversations` con su contacto embebido (solo lo que nombra). */
+export interface ChatConContacto {
+  id: string;
+  contact: { name?: string | null; phone?: string | null } | null;
+}
+
+/**
+ * Le pone a cada chat de «los que más gastaron» el nombre de su cliente, o el
+ * teléfono si no tiene nombre. Si no se pudo leer, `cliente` queda null y la
+ * tarjeta dice «Ver chat», como antes: lo que adorna no tumba lo que sirve.
+ */
+export function nombrarChats(
+  porChat: GastoChat[],
+  chats: ChatConContacto[] | null,
+): (GastoChat & { cliente: string | null })[] {
+  const nombres = new Map<string, string>();
+  for (const c of chats ?? []) {
+    const nombre = c.contact?.name?.trim() || c.contact?.phone?.trim();
+    if (nombre) nombres.set(c.id, nombre);
+  }
+  return porChat.map((c) => ({ ...c, cliente: nombres.get(c.conversation_id) ?? null }));
+}

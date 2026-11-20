@@ -3,7 +3,7 @@ import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { resolveTimeZone, zonedDayKey, zonedDayStart, zonedLastNDayKeys } from '@/lib/ai/usage-days'
 import { fetchAllPages, fetchPagesUpTo } from '@/lib/supabase/paged-query'
 import { getT } from '@/lib/i18n/translate'
-import { mesBogota, resumirGasto, sumarUsd } from '@/lib/ai/gasto'
+import { mesBogota, nombrarChats, resumirGasto, sumarUsd, type ChatConContacto } from '@/lib/ai/gasto'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 
 const t = getT('Api')
@@ -149,6 +149,24 @@ export async function GET(request: Request) {
       console.error('[ai/usage GET] gasto de la ventana:', error)
     }
     const gasto = resumirGasto(filasGasto ?? [], (iso) => zonedDayKey(iso, timeZone))
+    // El nombre del cliente de cada chat que más gastó (son pocos: un `in()`
+    // corto). Si falla, la tarjeta dice «Ver chat» sin nombre.
+    let chatsNombrados: ChatConContacto[] | null = null
+    if (gasto.por_chat.length > 0) {
+      try {
+        const { data, error } = await supabase
+          .from('conversations')
+          .select('id, contact:contacts(name, phone)')
+          .in(
+            'id',
+            gasto.por_chat.map((c) => c.conversation_id),
+          )
+        if (error) throw error
+        chatsNombrados = (data ?? []) as unknown as ChatConContacto[]
+      } catch (error) {
+        console.error('[ai/usage GET] nombres de los chats:', error)
+      }
+    }
     // El tope mensual del bot (0114). Lectura de la dirección (ya comprobada).
     const { data: tope } = await supabaseAdmin()
       .from('parametros')
@@ -199,7 +217,7 @@ export async function GET(request: Request) {
         // null: no se pudo leer (no es cero).
         total_usd: filasGasto ? gasto.total_usd : null,
         sin_costo: gasto.sin_costo,
-        por_chat: gasto.por_chat,
+        por_chat: nombrarChats(gasto.por_chat, chatsNombrados),
         tope_usd_mes: Number.isFinite(topeUsd) ? topeUsd : null,
         mes: mes.mes,
         gasto_mes_usd: gastoMes,

@@ -38,6 +38,13 @@ vi.mock('@/lib/auth/account', () => ({
             return chain
           },
           order: () => chain,
+          // Los nombres de los chats que más gastaron (conversations + contacts).
+          in: async (_col: string, ids: string[]) => ({
+            data: ids
+              .filter((id) => id !== 'c-sin-fila')
+              .map((id) => ({ id, contact: id === 'c1' ? { name: 'Ana Ruiz', phone: '+57 300' } : { name: null, phone: '+57 311' } })),
+            error: null,
+          }),
           range: async (from: number, to: number) => {
             if (hasta) {
               h.mes = { desde: desde!, hasta }
@@ -147,8 +154,8 @@ describe('GET /api/ai/usage', () => {
     expect(body.daily.map((d) => d.usd)).toEqual([0.001, 0.007])
     expect(body.daily.reduce((n, d) => n + d.usd, 0)).toBeCloseTo(body.gasto.total_usd, 9)
     expect(body.gasto.por_chat).toEqual([
-      { conversation_id: 'c2', usd: 0.005, llamadas: 1 },
-      { conversation_id: 'c1', usd: 0.003, llamadas: 2 },
+      { conversation_id: 'c2', usd: 0.005, llamadas: 1, cliente: '+57 311' },
+      { conversation_id: 'c1', usd: 0.003, llamadas: 2, cliente: 'Ana Ruiz' },
     ])
     expect(body.gasto.tope_usd_mes).toBe(25)
   })
