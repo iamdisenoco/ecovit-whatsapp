@@ -148,7 +148,7 @@ vi.mock('@/lib/flows/admin-client', () => ({
     from: () => {
       const b: Record<string, unknown> = {}
       const chain = () => b
-      for (const m of ['update', 'eq', 'select']) b[m] = vi.fn(chain)
+      for (const m of ['update', 'eq', 'is', 'in', 'select']) b[m] = vi.fn(chain)
       b.then = (resolve: (v: unknown) => unknown) =>
         resolve({ data: null, error: null })
       return b

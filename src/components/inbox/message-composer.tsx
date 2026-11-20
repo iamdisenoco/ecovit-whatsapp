@@ -42,10 +42,10 @@ import { useCan } from "@/hooks/use-can";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import {
-  uploadAccountMedia,
   deleteAccountMedia,
   MEDIA_MAX_BYTES_BY_KIND,
 } from "@/lib/storage/upload-media";
+import { subirAdjuntoSaliente } from "@/lib/storage/subir-adjunto-saliente";
 import { ReplyQuote } from "./reply-quote";
 import { useTranslations } from "next-intl";
 import {
@@ -103,6 +103,8 @@ const PICKER_ACCEPT: Record<"image" | "video" | "document", string> = {
 interface MediaDraft {
   kind: ComposerMediaKind;
   mediaUrl: string;
+  /** ECOVIT: enlace firmado corto para la vista previa (el bucket es privado). */
+  previewUrl: string | null;
   /** Storage path — used to GC the object if the draft is discarded. */
   path: string;
   filename: string;
@@ -415,10 +417,10 @@ export function MessageComposer({
       }
       setBusy(true);
       try {
-        const { publicUrl, path } = await uploadAccountMedia(CHAT_MEDIA_BUCKET, file);
+        const { mediaUrl, path, vistaPrevia } = await subirAdjuntoSaliente(file);
         // Replacing an existing draft? GC the previous object first.
         removeStaged(draftRef.current?.path);
-        setDraft({ kind, mediaUrl: publicUrl, path, filename: file.name, caption: "" });
+        setDraft({ kind, mediaUrl, previewUrl: vistaPrevia, path, filename: file.name, caption: "" });
       } catch (err) {
         toast.error(err instanceof Error ? err.message : t("uploadFailed"));
       } finally {
@@ -453,9 +455,9 @@ export function MessageComposer({
       }
       setBusy(true);
       try {
-        const { publicUrl, path } = await uploadAccountMedia(CHAT_MEDIA_BUCKET, file);
+        const { mediaUrl, path, vistaPrevia } = await subirAdjuntoSaliente(file);
         removeStaged(draftRef.current?.path);
-        setDraft({ kind: "audio", mediaUrl: publicUrl, path, filename: file.name, caption: "" });
+        setDraft({ kind: "audio", mediaUrl, previewUrl: vistaPrevia, path, filename: file.name, caption: "" });
       } catch (err) {
         toast.error(err instanceof Error ? err.message : t("uploadFailed"));
       } finally {
@@ -869,16 +871,16 @@ function MediaDraftPreview({
           {draft.kind === "image" && (
             // eslint-disable-next-line @next/next/no-img-element
             <img
-              src={draft.mediaUrl}
+              src={draft.previewUrl ?? draft.mediaUrl}
               alt={draft.filename}
               className="max-h-40 rounded-lg object-cover"
             />
           )}
           {draft.kind === "video" && (
-            <video src={draft.mediaUrl} controls className="max-h-40 rounded-lg" />
+            <video src={draft.previewUrl ?? draft.mediaUrl} controls className="max-h-40 rounded-lg" />
           )}
           {draft.kind === "audio" && (
-            <audio src={draft.mediaUrl} controls className="w-full" />
+            <audio src={draft.previewUrl ?? draft.mediaUrl} controls className="w-full" />
           )}
           {draft.kind === "document" && (
             <div className="flex items-center gap-2 text-sm text-foreground">

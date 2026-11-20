@@ -19,25 +19,32 @@ import {
   type ReferenciaConversacion,
   type ResultadoEnvio,
 } from './proveedor/tipos';
-import { COLUMNA_REFERENCIA, faltaEnLaBase } from './webhook/almacen-supabase';
+import {
+  BUCKET_ADJUNTOS,
+  COLUMNA_CUENTA_REFERENCIA,
+  COLUMNA_REFERENCIA,
+} from './webhook/almacen-supabase';
+import { rutaDesdeUrlInterna } from './webhook/adjuntos';
 
-/** La conversación del proveedor guardada por el webhook (columna pendiente de SQL). */
+/** La conversación (y la cuenta) del proveedor que guardó el webhook (0115). */
 export async function leerReferenciaConversacion(
   db: SupabaseClient,
   conversationId: string
-): Promise<string | null> {
+): Promise<ReferenciaConversacion> {
   const { data, error } = await db
     .from('conversations')
-    .select(COLUMNA_REFERENCIA)
+    .select(`${COLUMNA_REFERENCIA}, ${COLUMNA_CUENTA_REFERENCIA}`)
     .eq('id', conversationId)
     .maybeSingle();
-  if (faltaEnLaBase(error)) return null;
   if (error)
     throw new Error(
       `No se pudo leer la conversación del proveedor: ${error.message}`
     );
   const fila = data as Record<string, string | null> | null;
-  return fila?.[COLUMNA_REFERENCIA] ?? null;
+  return {
+    conversacionId: fila?.[COLUMNA_REFERENCIA] ?? null,
+    cuentaId: fila?.[COLUMNA_CUENTA_REFERENCIA] ?? null,
+  };
 }
 
 export async function guardarReferenciaConversacion(
@@ -48,14 +55,47 @@ export async function guardarReferenciaConversacion(
   if (!ref?.conversacionId) return;
   const { error } = await db
     .from('conversations')
-    .update({ [COLUMNA_REFERENCIA]: ref.conversacionId })
+    .update({
+      [COLUMNA_REFERENCIA]: ref.conversacionId,
+      [COLUMNA_CUENTA_REFERENCIA]: ref.cuentaId,
+    })
     .eq('id', conversationId);
-  if (error && !faltaEnLaBase(error)) {
+  if (error) {
     console.warn(
       '[enviar] no se pudo guardar la conversación del proveedor:',
       error.message
     );
   }
+}
+
+/** Cuánto vive el enlace firmado que se le da al proveedor para bajar el adjunto. */
+export const VENCE_ADJUNTO_SALIENTE_S = 10 * 60;
+
+/**
+ * Un adjunto nuestro (`/api/whatsapp/adjunto/<ruta>` en el bucket privado
+ * chat-media) se le pasa al proveedor como enlace firmado de vencimiento corto:
+ * Zernio y Meta lo bajan por URL al enviar. Otra URL pasa tal cual.
+ */
+export async function urlParaProveedor(
+  url: string,
+  accountId: string
+): Promise<string> {
+  const ruta = rutaDesdeUrlInterna(url);
+  if (!ruta) return url;
+  // Solo lo que se subió para MANDAR desde esta cuenta. Firmar cualquier ruta
+  // dejaría a un vendedor reenviar adjuntos de chats que no ve.
+  if (!ruta.startsWith(`account-${accountId}/outbound/`)) {
+    throw new Error('Ese adjunto no se puede enviar desde aquí.');
+  }
+  const { data, error } = await supabaseAdmin()
+    .storage.from(BUCKET_ADJUNTOS)
+    .createSignedUrl(ruta, VENCE_ADJUNTO_SALIENTE_S);
+  if (error || !data?.signedUrl) {
+    throw new Error(
+      `No se pudo firmar el adjunto: ${error?.message ?? 'sin enlace'}`
+    );
+  }
+  return data.signedUrl;
 }
 
 export type PedidoEnvio =
@@ -100,13 +140,7 @@ export async function enviarPorProveedor(args: {
   try {
     const proveedor = crearProveedor();
     const destino: DestinoEnvio = {
-      referencia: {
-        conversacionId: await leerReferenciaConversacion(
-          admin,
-          args.conversationId
-        ),
-        cuentaId: null,
-      },
+      referencia: await leerReferenciaConversacion(admin, args.conversationId),
       telefono: args.telefono,
     };
     const opciones = {

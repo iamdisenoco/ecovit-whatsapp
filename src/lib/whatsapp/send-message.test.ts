@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import {
@@ -194,14 +194,23 @@ vi.mock('@/lib/whatsapp/config-servidor', () => ({
   }),
 }))
 
+// ECOVIT · bloque 5: con la clave de servicio van la pausa de flujos y, desde la
+// revisión, el adjunto (`media_url`) y el wamid de la fila que la bandeja guarda
+// en `sending` ANTES de enviar.
+const adminUpdates = vi.hoisted(() => [] as Record<string, unknown>[]);
 vi.mock('@/lib/flows/admin-client', () => ({
-  // Only used for the best-effort "pause active flow run" write.
   supabaseAdmin: () => ({
-    from: () => ({
-      update: () => ({
-        eq: () => ({ eq: () => ({ eq: async () => ({ error: null }) }) }),
-      }),
-    }),
+    from: (table: string) => {
+      const b: Record<string, unknown> = {};
+      const chain = () => b;
+      for (const m of ['eq', 'is', 'in', 'select']) b[m] = chain;
+      b.update = (row: Record<string, unknown>) => {
+        if (table === 'messages') adminUpdates.push(row);
+        return b;
+      };
+      b.then = (resolve: (v: unknown) => unknown) => resolve({ data: [], error: null });
+      return b;
+    },
   }),
 }));
 
@@ -209,6 +218,10 @@ const applyPendingMessageStatuses = vi.hoisted(() => vi.fn(async () => []));
 vi.mock('@/lib/whatsapp/message-status-sync', () => ({
   applyPendingMessageStatuses,
 }));
+
+beforeEach(() => {
+  adminUpdates.length = 0;
+});
 
 interface CapturedWrites {
   message?: Record<string, unknown>;
@@ -408,9 +421,9 @@ describe('sendMessageToConversation — template persistence (#483)', () => {
         templateParams: ['A123', 'Friday'],
       }
     );
-    expect(captured.message?.media_url).toBe(
-      'https://cdn.example.com/banner.png'
-    );
+    // ECOVIT: la URL la escribe el servicio, no el insert con sesión.
+    expect(captured.message).not.toHaveProperty('media_url');
+    expect(adminUpdates).toContainEqual({ media_url: 'https://cdn.example.com/banner.png' });
   });
 
   it('stores no media for a template without a media header', async () => {
@@ -422,7 +435,8 @@ describe('sendMessageToConversation — template persistence (#483)', () => {
       templateParams: ['A123', 'Friday'],
       mediaUrl: 'https://cdn.example.com/ignored.png',
     });
-    expect(captured.message?.media_url).toBeNull();
+    expect(captured.message).not.toHaveProperty('media_url');
+    expect(adminUpdates.some((u) => 'media_url' in u)).toBe(false);
   });
 });
 

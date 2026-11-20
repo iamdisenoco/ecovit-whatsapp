@@ -38,7 +38,11 @@ import {
 import { leerCredencialesMeta } from '@/lib/whatsapp/config-servidor';
 import { nombreProveedor } from '@/lib/whatsapp/proveedor/nombre';
 import { ErrorConfiguracion, type NombreProveedor } from '@/lib/whatsapp/proveedor/tipos';
-import { enviarPorProveedor, type PedidoEnvio } from '@/lib/whatsapp/enviar-por-proveedor';
+import {
+  enviarPorProveedor,
+  urlParaProveedor,
+  type PedidoEnvio,
+} from '@/lib/whatsapp/enviar-por-proveedor';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
 import {
   phoneVariants,
@@ -334,8 +338,99 @@ export async function sendMessageToConversation(
     sendLanguage = resolved.language;
   }
 
-  // El id de NUESTRO mensaje va antes del envío: es la clave de idempotencia.
+  // Persist the sent message. Field names MUST match the messages
+  // schema (see 001_initial_schema.sql).
+  // Interactive messages persist the body as content_text (so the
+  // conversation-list preview reads sensibly) plus the full structured
+  // payload so the thread can re-render the buttons / rows.
+  //
+  // Templates persist the *substituted* body. The composer pre-renders
+  // and posts it as contentText; every other caller (the public API,
+  // most importantly) sends none, and storing null there left the
+  // Inbox rendering an empty bubble — issue #483.
+  const persistedText =
+    messageType === 'interactive'
+      ? interactivePayload!.body
+      : messageType === 'template'
+        ? templateContentText(
+            templateRow,
+            templateBodyParams(templateParams, templateMessageParams),
+            contentText
+          )
+        : (contentText ?? null);
+
+  // ECOVIT · bloque 5 (revisión 🔴2): la fila se guarda en `sending` ANTES
+  // de llamar al proveedor, con id = la clave de idempotencia. Si el
+  // `message.sent` del webhook llega antes que la respuesta, adopta ESTA fila
+  // en vez de guardar otra (y el insert de aquí ya no choca con el índice
+  // único). Con la sesión: la RLS decide si este vendedor escribe en el chat.
+  // Sin `media_url` en el objeto: con el permiso por columna de la 0115,
+  // nombrarla (aunque sea null) rechaza la sentencia entera con 42501. El
+  // adjunto lo escribe la clave de servicio justo después.
+  // El enlace que baja el proveedor se resuelve ANTES de guardar nada: si el
+  // adjunto no se puede mandar desde aquí, no queda una fila a medias.
+  let urlEnvio: string | null = null;
+  if (isMediaKind) {
+    try {
+      urlEnvio = await urlParaProveedor(mediaUrl!, accountId);
+    } catch (err) {
+      throw new SendMessageError(
+        'bad_request',
+        err instanceof Error ? err.message : String(err),
+        400
+      );
+    }
+  }
   const idMensaje = randomUUID();
+  const mediaUrlFila =
+    messageType === 'template'
+      ? templateHeaderMediaUrl(templateRow, templateMessageParams)
+      : mediaUrl || null;
+  const { data: messageRecord, error: msgError } = await db
+    .from('messages')
+    .insert({
+      id: idMensaje,
+      conversation_id: conversationId,
+      sender_type: 'agent',
+      sender_id: senderId ?? null,
+      content_type: messageType,
+      content_text: persistedText,
+      template_name: templateName || null,
+      interactive_payload:
+        messageType === 'interactive' ? interactivePayload : null,
+      message_id: null,
+      status: 'sending',
+      reply_to_message_id: replyToMessageId || null,
+    })
+    .select('id')
+    .single();
+  if (msgError || !messageRecord) {
+    console.error('[send-message] error inserting message before send:', msgError);
+    throw new SendMessageError(
+      'db_error',
+      `No se pudo guardar el mensaje (no se envió): ${msgError?.message ?? 'sin fila'}`,
+      500
+    );
+  }
+  const admin = supabaseAdmin();
+  if (mediaUrlFila) {
+    const { error: mediaErr } = await admin
+      .from('messages')
+      .update({ media_url: mediaUrlFila })
+      .eq('id', idMensaje);
+    if (mediaErr) console.error('[send-message] no se pudo anotar el adjunto:', mediaErr.message);
+  }
+
+  /** Un error definitivo: la fila queda en `failed` con el mensaje real. */
+  const marcarFallido = async (motivo: string) => {
+    const { error } = await admin
+      .from('messages')
+      .update({ status: 'failed', error_title: motivo.slice(0, 500) })
+      .eq('id', idMensaje)
+      .eq('status', 'sending');
+    if (error) console.error('[send-message] no se pudo marcar el fallo:', error.message);
+  };
+
   let waMessageId = '';
   let workingPhone = sendTarget;
   let pendiente = false;
@@ -361,7 +456,7 @@ export async function sendMessageToConversation(
           ? {
               clase: 'media',
               tipo: messageType as MediaKind,
-              url: mediaUrl!,
+              url: urlEnvio!,
               texto: contentText || null,
               nombreArchivo: filename || null,
             }
@@ -374,6 +469,7 @@ export async function sendMessageToConversation(
       pedido,
     });
     if (r.estado === 'fallido') {
+      await marcarFallido(r.motivo);
       throw new SendMessageError(r.codigo, r.motivo, r.status);
     }
     if (r.estado === 'pendiente') pendiente = true;
@@ -381,6 +477,7 @@ export async function sendMessageToConversation(
   } else {
     const config = await leerCredencialesMeta(accountId);
     if (!config) {
+      await marcarFallido('WhatsApp (Meta) no está configurado.');
       throw new SendMessageError(
         'whatsapp_not_configured',
         'WhatsApp not configured. Please set up your WhatsApp integration first.',
@@ -410,7 +507,7 @@ export async function sendMessageToConversation(
           accessToken,
           to: phone,
           kind: messageType as MediaKind,
-          link: mediaUrl!,
+          link: urlEnvio!,
           caption: contentText || undefined,
           filename: filename || undefined,
           contextMessageId,
@@ -487,6 +584,7 @@ export async function sendMessageToConversation(
       const message =
         err instanceof Error ? err.message : 'Unknown Meta API error';
       console.error('[send-message] Meta send failed for all variants:', message);
+      await marcarFallido(`Meta API error: ${message}`);
       throw new SendMessageError('meta_error', `Meta API error: ${message}`, 502);
     }
   }
@@ -502,62 +600,16 @@ export async function sendMessageToConversation(
     );
   }
 
-  // Persist the sent message. Field names MUST match the messages
-  // schema (see 001_initial_schema.sql).
-  // Interactive messages persist the body as content_text (so the
-  // conversation-list preview reads sensibly) plus the full structured
-  // payload so the thread can re-render the buttons / rows.
-  //
-  // Templates persist the *substituted* body. The composer pre-renders
-  // and posts it as contentText; every other caller (the public API,
-  // most importantly) sends none, and storing null there left the
-  // Inbox rendering an empty bubble — issue #483.
-  const persistedText =
-    messageType === 'interactive'
-      ? interactivePayload!.body
-      : messageType === 'template'
-        ? templateContentText(
-            templateRow,
-            templateBodyParams(templateParams, templateMessageParams),
-            contentText
-          )
-        : (contentText ?? null);
-
-  const { data: messageRecord, error: msgError } = await db
-    .from('messages')
-    .insert({
-      id: idMensaje,
-      conversation_id: conversationId,
-      sender_type: 'agent',
-      sender_id: senderId ?? null,
-      content_type: messageType,
-      content_text: persistedText,
-      media_url:
-        messageType === 'template'
-          ? templateHeaderMediaUrl(templateRow, templateMessageParams)
-          : mediaUrl || null,
-      template_name: templateName || null,
-      interactive_payload:
-        messageType === 'interactive' ? interactivePayload : null,
-      // Pendiente: sin wamid y en `sending`; el webhook lo concilia o lo marca fallido.
-      message_id: pendiente ? null : waMessageId,
-      status: pendiente ? 'sending' : 'sent',
-      reply_to_message_id: replyToMessageId || null,
-    })
-    .select()
-    .single();
-
-  if (msgError) {
-    console.error('[send-message] error inserting sent message:', msgError);
-    throw new SendMessageError(
-      'db_error',
-      `Message sent to Meta but failed to save to DB: ${msgError.message}`,
-      500
-    );
-  }
-
   if (!pendiente) {
-    await applyPendingMessageStatuses(supabaseAdmin(), accountId, waMessageId);
+    // Si el webhook ya adoptó la fila (`message.sent` antes que la respuesta),
+    // `message_id` ya no es null y esto no cambia nada: es la misma fila.
+    const { error: wamidErr } = await admin
+      .from('messages')
+      .update({ message_id: waMessageId, status: 'sent' })
+      .eq('id', idMensaje)
+      .is('message_id', null);
+    if (wamidErr) console.error('[send-message] no se pudo anotar el wamid:', wamidErr.message);
+    await applyPendingMessageStatuses(admin, accountId, waMessageId);
   }
 
   const lastMessageText =
