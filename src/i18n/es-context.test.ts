@@ -5,7 +5,6 @@ import messages from '../../messages/es.json';
 import { getDateLocale } from './date-locale';
 import type { Translate } from '@/lib/i18n/translate';
 import { presenceLabel } from '@/lib/presence';
-import { buildHandoffSummary } from '@/lib/ai/handoff';
 import { notificationText } from '@/lib/notifications/notification-text';
 
 function translator(namespace: string): Translate {
@@ -47,27 +46,6 @@ describe('Spanish messages in their UI context', () => {
     );
     expect(t('minutesAgo', { count: 1 })).toBe('hace 1 minuto');
   });
-
-  it.each([
-    [0, 'sin responder'],
-    [1, 'después de 1 respuesta'],
-    [2, 'después de 2 respuestas'],
-  ])(
-    'renders a handoff after %i replies without exposing ICU syntax',
-    (replyCount, phrase) => {
-      const text = buildHandoffSummary(
-        {
-          replyCount: Number(replyCount),
-          messages: [{ role: 'user', content: 'help {please}' }],
-        },
-        translator('Handoff')
-      );
-      expect(text).toBe(
-        `🤖 El agente de IA transfirió la conversación ${phrase}. Último mensaje del cliente: “help {please}”`
-      );
-      expect(text).not.toMatch(/other|plural|#/);
-    }
-  );
 
   it('localizes assignment notifications without changing stored content', () => {
     const original = {

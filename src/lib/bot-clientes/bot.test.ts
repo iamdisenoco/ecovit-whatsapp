@@ -17,6 +17,7 @@ let puedeSecuencia: { puede: boolean; motivo: string | null }[];
 let claim: boolean;
 let catalogo: Record<string, unknown>[];
 let paso: Record<string, unknown>;
+let escribiendoLlamado: number;
 
 function db(): SupabaseClient {
   return {
@@ -59,6 +60,9 @@ function deps(): DependenciasBot {
       return r;
     },
     contexto: async () => [{ role: 'user', content: '¿Precio del fluxómetro FX-1?' }],
+    escribiendo: async () => {
+      escribiendoLlamado++;
+    },
     enviarTexto: async (t) => {
       enviados.push(t);
     },
@@ -86,6 +90,7 @@ beforeEach(() => {
     { codigo: 'FX-2', descripcion: 'Fluxómetro sanitario', unidad: 'UND', precio_base: null, disponibilidad: 'a confirmar' },
   ];
   paso = { en_espera: false, destino_id: 'p-carlos', repetido: false };
+  escribiendoLlamado = 0;
 });
 
 describe('cuándo NO contesta (cero llamadas a la IA)', () => {
@@ -95,6 +100,7 @@ describe('cuándo NO contesta (cero llamadas a la IA)', () => {
       const r = await atenderConBot(deps(), 'c1');
       expect(r).toEqual({ accion: 'silencio', motivo });
       expect(llamadas).toBe(0);
+      expect(escribiendoLlamado).toBe(0);
       expect(enviados).toEqual([]);
       expect(fns()).toEqual(['bot_puede_contestar_wa']);
     });
@@ -135,6 +141,19 @@ describe('contesta', () => {
     });
     // Justo antes de enviar, reclama el cupo.
     expect(fns().indexOf('claim_ai_reply_slot')).toBeGreaterThan(fns().lastIndexOf('registrar_uso_ia_wa'));
+  });
+
+  it('muestra «escribiendo…» cuando va a pensar, y si falla igual contesta', async () => {
+    const d = deps();
+    let escribio = 0;
+    d.escribiendo = async () => {
+      escribio++;
+      throw new Error('Meta 400');
+    };
+    respuestasClaude = [texto('Hola, ¿qué referencia buscas?')];
+    const r = await atenderConBot(d, 'c1');
+    expect(escribio).toBe(1);
+    expect(r.accion).toBe('respondio');
   });
 
   it('el modelo nunca ve el número del precio', () => {

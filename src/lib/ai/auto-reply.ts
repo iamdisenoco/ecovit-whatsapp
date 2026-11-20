@@ -16,7 +16,9 @@ import { supabaseAdmin } from './admin-client'
 import { loadAiConfig } from './config'
 import { aiRequestTimeoutMs } from './defaults'
 import { buildConversationContext } from './context'
-import { engineSendText } from '@/lib/flows/meta-send'
+import { engineSendText, loadAccountMetaCredentials } from '@/lib/flows/meta-send'
+import { sendTypingIndicator } from '@/lib/whatsapp/meta-api'
+import { nombreProveedor } from '@/lib/whatsapp/proveedor/nombre'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
 import { atenderConBot, type ResultadoBot } from '@/lib/bot-clientes/bot'
 import { llamarClaude } from '@/lib/bot-clientes/claude'
@@ -74,6 +76,14 @@ export async function dispatchInboundToAiReply(args: DispatchArgs): Promise<Resu
             aiGenerated: true,
           })
         },
+        // El «escribiendo…» (y el «leído») solo existe en Meta directo.
+        escribiendo:
+          inboundMessageId && nombreProveedor() === 'meta'
+            ? async () => {
+                const { phoneNumberId, accessToken } = await loadAccountMetaCredentials(db, accountId)
+                await sendTypingIndicator({ phoneNumberId, accessToken, messageId: inboundMessageId })
+              }
+            : undefined,
         hayEntranteMasNuevo: inboundMessageId
           ? async () => {
               const { data, error } = await db

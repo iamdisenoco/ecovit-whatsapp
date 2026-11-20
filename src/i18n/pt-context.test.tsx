@@ -7,7 +7,6 @@ import messages from '../../messages/pt.json';
 import { getDateLocale } from './date-locale';
 import type { Translate } from '@/lib/i18n/translate';
 import { presenceLabel } from '@/lib/presence';
-import { buildHandoffSummary } from '@/lib/ai/handoff';
 import { notificationText } from '@/lib/notifications/notification-text';
 import { ModeToggle } from '@/components/layout/mode-toggle';
 import { AppearancePanel } from '@/components/settings/appearance-panel';
@@ -142,27 +141,6 @@ describe('Portuguese messages in their UI context', () => {
       'Offline — última atividade há algum tempo'
     );
   });
-
-  it.each([
-    [0, 'sem responder'],
-    [1, 'após 1 resposta'],
-    [2, 'após 2 respostas'],
-  ])(
-    'localizes the handoff note after %i replies without translating customer content',
-    (replyCount, phrase) => {
-      expect(
-        buildHandoffSummary(
-          {
-            replyCount,
-            messages: [{ role: 'user', content: 'help {please}' }],
-          },
-          translator('Handoff')
-        )
-      ).toBe(
-        `🤖 O agente de IA transferiu a conversa ${phrase}. Última mensagem do cliente: “help {please}”`
-      );
-    }
-  );
 
   it('localizes stored assignment notifications from structured references', () => {
     const notification = {

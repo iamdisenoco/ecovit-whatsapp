@@ -49,6 +49,8 @@ export interface DependenciasBot {
   contexto: () => Promise<ChatMessage[]>;
   /** ¿Llegó otro mensaje del cliente después del que se está contestando? */
   hayEntranteMasNuevo?: () => Promise<boolean>;
+  /** «Escribiendo…» para el cliente (solo Meta). Cosmético: no puede fallar el bot. */
+  escribiendo?: () => Promise<void>;
   ahora?: () => Date;
 }
 
@@ -226,6 +228,13 @@ export async function atenderConBot(deps: DependenciasBot, conversationId: strin
     if (!config) {
       console.error('[bot-clientes] la IA está prendida pero sin llave de Anthropic.');
       return pasarAVendedor(deps, conversationId, 'ia_caida', resumenDe(contexto, 'La IA no está configurada.'), true);
+    }
+
+    // Pasó todo: el bot va a pensar. Se le muestra al cliente que escribe.
+    if (deps.escribiendo) {
+      await deps.escribiendo().catch((err) =>
+        console.warn('[bot-clientes] «escribiendo…» falló (sigue):', err instanceof Error ? err.message : err)
+      );
     }
 
     const { data: conv } = await db
