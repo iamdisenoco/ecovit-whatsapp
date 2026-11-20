@@ -4,6 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { atenderConBot, codigosDeTurnosAnteriores, MARCA_T9_HISTORIAL, mensajesParaClaude, paraElModelo, type DependenciasBot } from './bot';
 import { ErrorClaude, llamarClaude, urlMensajes, type RespuestaClaude } from './claude';
 import { costoUsd, leerUso } from './costo';
+import { SISTEMA_BOT } from './prompt';
 import { cantidadesDelCliente, revisarRespuesta, valorEnPalabras } from './revisor';
 import { t3PasoConAsesor, t9PrecioLista, TEXTOS } from './textos';
 
@@ -564,5 +565,29 @@ describe('última ronda del revisor', () => {
   it('«el precio de los dos que tienen» no es un precio; «el precio de los veinte» sí frena', () => {
     expect(revisarRespuesta('El precio de los dos que tienen te lo paso enseguida.', new Map(), VISTO).ok).toBe(true);
     expect(revisarRespuesta('El precio de los veinte es otro.', new Map(), VISTO).ok).toBe(false);
+  });
+});
+
+describe('el marcador del T9 en el historial', () => {
+  it('dice que el precio ya se entregó bien, y el prompt lo explica', () => {
+    expect(MARCA_T9_HISTORIAL).toMatch(/entregado al cliente correctamente por el sistema/);
+    expect(MARCA_T9_HISTORIAL).not.toMatch(/\d/);
+    expect(SISTEMA_BOT).toContain('[Precio de lista entregado al cliente correctamente por el sistema');
+  });
+
+  for (const t of [
+    'Antes te escribí un aviso del sistema en lugar del precio del FX-1020, y eso fue un error mío. Aquí va: [[PRECIO:FX-1020]]',
+    'Perdón, no te llegó el precio. [[PRECIO:FX-1020]]',
+    'Fue mi error, disculpa.',
+  ]) {
+    it(`frena la disculpa por el precio: «${t.slice(0, 40)}…»`, () => {
+      const refs = new Map([['FX-1020', { codigo: 'FX-1020', descripcion: 'x', unidad: 'UND', precio_base: 148000 }]]);
+      expect(revisarRespuesta(t, refs, '{"codigo":"FX-1020"}').ok).toBe(false);
+    });
+  }
+
+  it('una respuesta normal con el precio sigue pasando', () => {
+    const refs = new Map([['FX-1020', { codigo: 'FX-1020', descripcion: 'x', unidad: 'UND', precio_base: 148000 }]]);
+    expect(revisarRespuesta('Claro, el FX-1020:\n[[PRECIO:FX-1020]]', refs, '{"codigo":"FX-1020"}').ok).toBe(true);
   });
 });

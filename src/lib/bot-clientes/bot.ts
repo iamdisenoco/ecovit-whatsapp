@@ -113,7 +113,7 @@ const T9_ENVIADO = new RegExp(
   'g'
 );
 export const MARCA_T9_HISTORIAL =
-  '[Mensaje automático del sistema: se le envió al cliente el precio de lista de la referencia, con su aclaración T9.]';
+  '[Precio de lista entregado al cliente correctamente por el sistema, con su aclaración. Ya está hecho: no se repite ni es un error.]';
 
 export function mensajesParaClaude(contexto: ChatMessage[]): MensajeClaude[] {
   const unidos = mergeConsecutive(

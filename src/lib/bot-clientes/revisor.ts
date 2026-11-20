@@ -145,6 +145,14 @@ export function cantidadesDelCliente(delCliente: string): Set<string> {
   return cantidad;
 }
 
+/**
+ * El modelo cree que el precio que el sistema entregó fue un error suyo
+ * («error mío», «no te llegó el precio», «aviso del sistema en lugar del
+ * precio»). Es falso y confunde al cliente: frena.
+ */
+const DISCULPA_POR_PRECIO =
+  /(?<!\p{L})(?:error\s+m[ií]o|mi\s+error|me\s+equivoqu[eé]|disculpa(?:s|me)?\s+por\s+(?:el|ese|lo\s+del)\s+(?:precio|aviso|mensaje)|no\s+te\s+lleg[oó]\s+(?:bien\s+)?el\s+precio|aviso\s+del\s+sistema|mensaje\s+(?:autom[aá]tico\s+)?del\s+sistema|en\s+lugar\s+del\s+precio)(?!\p{L})/iu;
+
 /** Acuerdos de precio: frenan siempre, haya o no número permitido. */
 const ACUERDO_PRECIO = /(?<!\p{L})(?:a|por|en)\s+ese\s+(?:valor|precio)(?!\p{L})/iu;
 
@@ -154,6 +162,7 @@ export function numeroNoPermitido(texto: string, permitidos: string, delCliente 
   if (DESCUENTO.test(texto)) return 'descuento';
   if (MAGNITUD.test(texto)) return 'cifra con magnitud';
   if (ACUERDO_PRECIO.test(texto)) return 'acuerdo de precio';
+  if (DISCULPA_POR_PRECIO.test(texto)) return 'se disculpa por un precio que el sistema ya entregó';
 
   const blanca = listaBlanca(permitidos);
   const cliente = { numeros: cantidadesDelCliente(delCliente) };
