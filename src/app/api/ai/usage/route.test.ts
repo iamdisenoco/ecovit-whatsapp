@@ -4,6 +4,7 @@ const h = vi.hoisted(() => ({
   rows: [] as Record<string, unknown>[],
   since: null as string | null,
   ranges: [] as [number, number][],
+  mes: null as { desde: string; hasta: string } | null,
 }))
 
 vi.mock('next/server', () => ({
@@ -22,15 +23,30 @@ vi.mock('@/lib/auth/account', () => ({
     role: 'admin',
     supabase: {
       from: () => {
+        // Dos consultas: la de la ventana (gte) y la del mes de Bogotá (gte + lt).
+        let desde: string | null = null
+        let hasta: string | null = null
         const chain = {
           select: () => chain,
           eq: () => chain,
           gte: (_col: string, value: string) => {
-            h.since = value
+            desde = value
+            return chain
+          },
+          lt: (_col: string, value: string) => {
+            hasta = value
             return chain
           },
           order: () => chain,
           range: async (from: number, to: number) => {
+            if (hasta) {
+              h.mes = { desde: desde!, hasta }
+              const delMes = h.rows.filter(
+                (r) => String(r.created_at) >= desde! && String(r.created_at) < hasta!,
+              )
+              return { data: delMes.slice(from, Math.min(to + 1, from + 1000)), error: null }
+            }
+            h.since = desde
             h.ranges.push([from, to])
             const end = Math.min(to + 1, from + 1000)
             return { data: h.rows.slice(from, end), error: null }
@@ -91,6 +107,7 @@ beforeEach(() => {
   h.rows = []
   h.since = null
   h.ranges = []
+  h.mes = null
 })
 
 afterEach(() => {
@@ -134,6 +151,27 @@ describe('GET /api/ai/usage', () => {
       { conversation_id: 'c1', usd: 0.003, llamadas: 2 },
     ])
     expect(body.gasto.tope_usd_mes).toBe(25)
+  })
+
+  it('ECOVIT: el tope se compara con el gasto del MES de Bogotá, no con el de la ventana', async () => {
+    // Hoy (fijo) es 2026-05-18. La ventana de 90 días toma abril; el mes no.
+    h.rows = [
+      row('2026-05-18T10:00:00Z', 1, { conversation_id: 'c1', costo_usd: 0.004 }),
+      // 1-may 03:00 UTC = 30-abr 22:00 en Bogotá: es de ABRIL (borde de abajo).
+      row('2026-05-01T03:00:00Z', 1, { conversation_id: 'c1', costo_usd: 0.5 }),
+      // 1-may 05:00 UTC = 1-may 00:00 en Bogotá: es de MAYO.
+      row('2026-05-01T05:00:00Z', 1, { conversation_id: 'c1', costo_usd: 0.002 }),
+      row('2026-04-10T10:00:00Z', 1, { conversation_id: 'c2', costo_usd: 1 }),
+      // Borde de arriba: 31-may 23:59 en Bogotá entra; 1-jun 00:00 en Bogotá no.
+      row('2026-06-01T04:59:00Z', 1, { conversation_id: 'c3', costo_usd: 0.01 }),
+      row('2026-06-01T05:00:00Z', 1, { conversation_id: 'c3', costo_usd: 0.1 }),
+    ]
+    const res = await get('days=90')
+    const g = (res.body as unknown as { gasto: { total_usd: number; gasto_mes_usd: number; mes: string } }).gasto
+    expect(h.mes).toEqual({ desde: '2026-05-01T05:00:00.000Z', hasta: '2026-06-01T05:00:00.000Z' })
+    expect(g.mes).toBe('2026-05')
+    expect(g.gasto_mes_usd).toBe(0.016)
+    expect(g.total_usd).toBe(1.616)
   })
 
   it('falls back to UTC for an invalid zone', async () => {

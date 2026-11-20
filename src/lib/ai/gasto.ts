@@ -59,3 +59,30 @@ export function resumirGasto(
     .slice(0, topChats);
   return { total_usd: redondear(total), sin_costo: sinCosto, por_dia: porDia, por_chat: porChat };
 }
+
+/**
+ * El mes de Bogotá que contiene `ahora`, con sus dos bordes en UTC: la misma
+ * regla que `_gasto_ia_wa_mes` (0114), que es la que hace cumplir el tope.
+ * Bogotá es UTC-5 todo el año (sin horario de verano).
+ */
+export function mesBogota(ahora: Date): { desde: string; hasta: string; mes: string } {
+  const local = new Date(ahora.getTime() - 5 * 3600_000);
+  const y = local.getUTCFullYear();
+  const m = local.getUTCMonth();
+  const desde = new Date(Date.UTC(y, m, 1, 5));
+  const hasta = new Date(Date.UTC(y, m + 1, 1, 5));
+  return {
+    desde: desde.toISOString(),
+    hasta: hasta.toISOString(),
+    mes: `${y}-${String(m + 1).padStart(2, '0')}`,
+  };
+}
+
+export function sumarUsd(filas: { costo_usd: number | string | null }[]): number {
+  let total = 0;
+  for (const f of filas) {
+    const v = f.costo_usd === null ? NaN : Number(f.costo_usd);
+    if (Number.isFinite(v)) total += v;
+  }
+  return redondear(total);
+}

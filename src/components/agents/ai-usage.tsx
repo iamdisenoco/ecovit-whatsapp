@@ -51,6 +51,9 @@ interface UsageResponse {
     sin_costo: number;
     por_chat: { conversation_id: string; usd: number; llamadas: number }[];
     tope_usd_mes: number | null;
+    /** El mes de Bogotá (AAAA-MM) y su gasto: lo único que se compara con el tope. */
+    mes?: string;
+    gasto_mes_usd?: number | null;
   };
 }
 
@@ -260,9 +263,9 @@ function Stat({
 }
 
 /**
- * ECOVIT · RF-M03.11: lo que se gastó en Claude en la ventana elegida, y los
- * chats que más gastaron. El tope es MENSUAL (mes de Bogotá) y lo hace cumplir
- * la base; aquí solo se muestra como referencia.
+ * ECOVIT · RF-M03.11: el gasto del MES de Bogotá contra el tope mensual (la
+ * misma regla con que la base lo hace cumplir), y aparte, sin tope, el de la
+ * ventana elegida con los chats que más gastaron.
  */
 function GastoClaude({
   gasto,
@@ -274,11 +277,17 @@ function GastoClaude({
   return (
     <div className="space-y-2">
       <div className="grid grid-cols-2 gap-3">
-        <Stat label={`Gasto en Claude (${dias} días)`} value={usd(gasto.total_usd)} />
         <Stat
-          label="Tope mensual del bot"
-          value={gasto.tope_usd_mes === null ? 'Sin definir' : usd(gasto.tope_usd_mes)}
+          label={`Este mes (${gasto.mes ?? 'Bogotá'}) contra el tope`}
+          value={
+            gasto.gasto_mes_usd === null || gasto.gasto_mes_usd === undefined
+              ? 'Sin dato'
+              : `${usd(gasto.gasto_mes_usd)} de ${
+                  gasto.tope_usd_mes === null ? 'tope sin definir' : usd(gasto.tope_usd_mes)
+                }`
+          }
         />
+        <Stat label={`En los últimos ${dias} días`} value={usd(gasto.total_usd)} />
       </div>
       {gasto.sin_costo > 0 && (
         <p className="text-xs text-muted-foreground">

@@ -3,7 +3,7 @@ import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { resolveTimeZone, zonedDayKey, zonedDayStart, zonedLastNDayKeys } from '@/lib/ai/usage-days'
 import { fetchPagesUpTo } from '@/lib/supabase/paged-query'
 import { getT } from '@/lib/i18n/translate'
-import { resumirGasto } from '@/lib/ai/gasto'
+import { mesBogota, resumirGasto, sumarUsd } from '@/lib/ai/gasto'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 
 const t = getT('Api')
@@ -138,6 +138,29 @@ export async function GET(request: Request) {
       .select('valor, definido')
       .eq('clave', 'bot_wa_tope_usd_mes')
       .maybeSingle()
+    // El tope es MENSUAL (mes de Bogotá): se compara con el gasto de ESE mes,
+    // no con el de la ventana elegida (que puede ser de 7 o de 90 días).
+    const mes = mesBogota(new Date())
+    let gastoMes: number | null = null
+    try {
+      const filasMes = await fetchPagesUpTo<{ costo_usd: number | string | null }>(
+        (from, to) =>
+          supabase
+            .from('ai_usage_log')
+            .select('costo_usd')
+            .eq('account_id', accountId)
+            .gte('created_at', mes.desde)
+            .lt('created_at', mes.hasta)
+            .order('created_at', { ascending: false })
+            .order('id', { ascending: false })
+            .range(from, to),
+        MAX_ROWS,
+      )
+      gastoMes = sumarUsd(filasMes)
+    } catch (error) {
+      // Lo que adorna no tumba lo que sirve: sin esta cifra, la tarjeta sigue.
+      console.error('[ai/usage GET] gasto del mes:', error)
+    }
     const topeUsd =
       tope && (tope as { definido: boolean }).definido && (tope as { valor: string | null }).valor
         ? Number(String((tope as { valor: string }).valor).replace(',', '.'))
@@ -161,6 +184,8 @@ export async function GET(request: Request) {
         sin_costo: gasto.sin_costo,
         por_chat: gasto.por_chat,
         tope_usd_mes: Number.isFinite(topeUsd) ? topeUsd : null,
+        mes: mes.mes,
+        gasto_mes_usd: gastoMes,
       },
     })
   } catch (err) {
