@@ -43,6 +43,17 @@ vi.mock('@/lib/auth/account', () => ({
   toErrorResponse: () => ({ body: { error: 'error' }, status: 500 }),
 }))
 
+vi.mock('@/lib/flows/admin-client', () => ({
+  supabaseAdmin: () => ({
+    from: () => {
+      const b: Record<string, unknown> = {}
+      for (const m of ['select', 'eq']) b[m] = () => b
+      b.maybeSingle = async () => ({ data: { valor: '25', definido: true }, error: null })
+      return b
+    },
+  }),
+}))
+
 import { GET } from './route'
 
 type UsageBody = {
@@ -59,8 +70,10 @@ function get(query: string) {
   }>
 }
 
-function row(createdAt: string, tokens = 10) {
+function row(createdAt: string, tokens = 10, extra: Record<string, unknown> = {}) {
   return {
+    conversation_id: null,
+    costo_usd: null,
     created_at: createdAt,
     mode: 'draft',
     provider: 'openai',
@@ -68,6 +81,7 @@ function row(createdAt: string, tokens = 10) {
     prompt_tokens: tokens,
     completion_tokens: 0,
     total_tokens: tokens,
+    ...extra,
   }
 }
 
@@ -90,13 +104,36 @@ describe('GET /api/ai/usage', () => {
     expect(la.body.time_zone).toBe('America/Los_Angeles')
     expect(h.since).toBe('2026-05-17T07:00:00.000Z')
     expect(la.body.daily).toEqual([
-      { date: '2026-05-17', tokens: 10, calls: 1 },
-      { date: '2026-05-18', tokens: 0, calls: 0 },
+      { date: '2026-05-17', tokens: 10, calls: 1, usd: 0 },
+      { date: '2026-05-18', tokens: 0, calls: 0, usd: 0 },
     ])
 
     const utc = await get('days=2')
     expect(utc.body.time_zone).toBe('UTC')
-    expect(utc.body.daily[1]).toEqual({ date: '2026-05-18', tokens: 10, calls: 1 })
+    expect(utc.body.daily[1]).toEqual({ date: '2026-05-18', tokens: 10, calls: 1, usd: 0 })
+  })
+
+  it('ECOVIT RF-M03.11: gasto en USD por día y por chat, de las mismas filas, y el tope', async () => {
+    h.rows = [
+      row('2026-05-18T10:00:00Z', 1, { conversation_id: 'c1', costo_usd: '0.002' }),
+      row('2026-05-18T09:00:00Z', 1, { conversation_id: 'c2', costo_usd: 0.005 }),
+      row('2026-05-17T09:00:00Z', 1, { conversation_id: 'c1', costo_usd: 0.001 }),
+      row('2026-05-17T08:00:00Z', 1),
+    ]
+    const res = await get('days=2')
+    const body = res.body as unknown as {
+      daily: { date: string; usd: number }[]
+      gasto: { total_usd: number; sin_costo: number; por_chat: { conversation_id: string; usd: number; llamadas: number }[]; tope_usd_mes: number }
+    }
+    expect(body.gasto.total_usd).toBe(0.008)
+    expect(body.gasto.sin_costo).toBe(1)
+    expect(body.daily.map((d) => d.usd)).toEqual([0.001, 0.007])
+    expect(body.daily.reduce((n, d) => n + d.usd, 0)).toBeCloseTo(body.gasto.total_usd, 9)
+    expect(body.gasto.por_chat).toEqual([
+      { conversation_id: 'c2', usd: 0.005, llamadas: 1 },
+      { conversation_id: 'c1', usd: 0.003, llamadas: 2 },
+    ])
+    expect(body.gasto.tope_usd_mes).toBe(25)
   })
 
   it('falls back to UTC for an invalid zone', async () => {

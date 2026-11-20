@@ -44,8 +44,18 @@ interface UsageResponse {
     calls: number;
     tokens: number;
   }[];
-  daily: { date: string; tokens: number; calls: number }[];
+  daily: { date: string; tokens: number; calls: number; usd?: number }[];
+  /** ECOVIT · RF-M03.11: el gasto en USD de las mismas filas. */
+  gasto?: {
+    total_usd: number;
+    sin_costo: number;
+    por_chat: { conversation_id: string; usd: number; llamadas: number }[];
+    tope_usd_mes: number | null;
+  };
 }
+
+const usd = (v: number) =>
+  new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'USD', maximumFractionDigits: 4 }).format(v);
 
 const WINDOWS = [7, 30, 90] as const;
 
@@ -168,6 +178,8 @@ export function AiUsageCard() {
               />
             </div>
 
+            {data.gasto && <GastoClaude gasto={data.gasto} dias={data.window_days} />}
+
             <div>
               <p className="mb-2 text-xs font-medium text-muted-foreground">
                 {t('tokensPerDay')}
@@ -243,6 +255,53 @@ function Stat({
       <p className="mt-1 text-lg font-semibold tabular-nums text-foreground">
         {value}
       </p>
+    </div>
+  );
+}
+
+/**
+ * ECOVIT · RF-M03.11: lo que se gastó en Claude en la ventana elegida, y los
+ * chats que más gastaron. El tope es MENSUAL (mes de Bogotá) y lo hace cumplir
+ * la base; aquí solo se muestra como referencia.
+ */
+function GastoClaude({
+  gasto,
+  dias,
+}: {
+  gasto: NonNullable<UsageResponse['gasto']>;
+  dias: number;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 gap-3">
+        <Stat label={`Gasto en Claude (${dias} días)`} value={usd(gasto.total_usd)} />
+        <Stat
+          label="Tope mensual del bot"
+          value={gasto.tope_usd_mes === null ? 'Sin definir' : usd(gasto.tope_usd_mes)}
+        />
+      </div>
+      {gasto.sin_costo > 0 && (
+        <p className="text-xs text-muted-foreground">
+          {gasto.sin_costo} llamadas sin costo anotado (anteriores al bot de ECOVIT): no suman.
+        </p>
+      )}
+      {gasto.por_chat.length > 0 && (
+        <div>
+          <p className="mb-2 text-xs font-medium text-muted-foreground">Chats que más gastaron</p>
+          <ul className="divide-y divide-border rounded-md border border-border">
+            {gasto.por_chat.map((c) => (
+              <li key={c.conversation_id} className="flex items-center justify-between px-3 py-2 text-sm">
+                <a href={`/inbox?c=${c.conversation_id}`} className="min-w-0 truncate text-primary hover:underline">
+                  Ver chat
+                </a>
+                <span className="flex-shrink-0 tabular-nums text-muted-foreground">
+                  {usd(c.usd)} · {c.llamadas} {c.llamadas === 1 ? 'llamada' : 'llamadas'}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

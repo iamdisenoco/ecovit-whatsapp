@@ -3,6 +3,8 @@ import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { resolveTimeZone, zonedDayKey, zonedDayStart, zonedLastNDayKeys } from '@/lib/ai/usage-days'
 import { fetchPagesUpTo } from '@/lib/supabase/paged-query'
 import { getT } from '@/lib/i18n/translate'
+import { resumirGasto } from '@/lib/ai/gasto'
+import { supabaseAdmin } from '@/lib/flows/admin-client'
 
 const t = getT('Api')
 
@@ -22,6 +24,8 @@ interface UsageRow {
   prompt_tokens: number
   completion_tokens: number
   total_tokens: number
+  conversation_id: string | null
+  costo_usd: number | string | null
 }
 
 /**
@@ -58,7 +62,7 @@ export async function GET(request: Request) {
           supabase
             .from('ai_usage_log')
             .select(
-              'created_at, mode, provider, model, prompt_tokens, completion_tokens, total_tokens',
+              'created_at, mode, provider, model, prompt_tokens, completion_tokens, total_tokens, conversation_id, costo_usd',
             )
             .eq('account_id', accountId)
             .gte('created_at', since.toISOString())
@@ -126,6 +130,19 @@ export async function GET(request: Request) {
 
     const byModel = [...modelMap.values()].sort((a, b) => b.tokens - a.tokens)
 
+    // ECOVIT · RF-M03.11: el gasto en USD, de las MISMAS filas.
+    const gasto = resumirGasto(rows, (iso) => zonedDayKey(iso, timeZone))
+    // El tope mensual del bot (0114). Lectura de la dirección (ya comprobada).
+    const { data: tope } = await supabaseAdmin()
+      .from('parametros')
+      .select('valor, definido')
+      .eq('clave', 'bot_wa_tope_usd_mes')
+      .maybeSingle()
+    const topeUsd =
+      tope && (tope as { definido: boolean }).definido && (tope as { valor: string | null }).valor
+        ? Number(String((tope as { valor: string }).valor).replace(',', '.'))
+        : null
+
     return NextResponse.json({
       window_days: days,
       time_zone: timeZone,
@@ -138,7 +155,13 @@ export async function GET(request: Request) {
       },
       by_mode: byMode,
       by_model: byModel,
-      daily: [...daily.values()],
+      daily: [...daily.values()].map((d) => ({ ...d, usd: gasto.por_dia[d.date] ?? 0 })),
+      gasto: {
+        total_usd: gasto.total_usd,
+        sin_costo: gasto.sin_costo,
+        por_chat: gasto.por_chat,
+        tope_usd_mes: Number.isFinite(topeUsd) ? topeUsd : null,
+      },
     })
   } catch (err) {
     return toErrorResponse(err)
