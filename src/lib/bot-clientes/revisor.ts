@@ -97,7 +97,7 @@ export function listaBlanca(permitidos: string): { numeros: Set<string> } {
  * total, una suma) no lo dijo nadie y frena.
  */
 const CANTIDAD_DESPUES =
-  /^\s*(?:unidades?|und|uds?|piezas?|pzas?|cajas?|metros?|mts?|rollos?|juegos?|(?:te\s+|les?\s+)?(?:alcanzan?|sirven?))(?!\p{L})/iu;
+  /^\s*(?:unidades?|und|uds?|piezas?|pzas?|cajas?|metros?|mts?|rollos?|juegos?|(?:te\s+|les?\s+)?(?:(?:s[ií]|ya|no)\s+)?(?:te\s+|les?\s+)?(?:alcanzan?|sirven?))(?!\p{L})/iu;
 const CANTIDAD_ANTES = /(?<!\p{L})(?:los|las)\s*$/iu;
 
 function comoCantidad(texto: string, inicio: number, fin: number): boolean {
@@ -117,7 +117,16 @@ const PRECIO_DESPUES = /^\s*(?:mil|k|millones?|mill[oó]n|pesos?|lucas?|lukas?|p
  * de precio. Si el mismo número aparece una vez como precio («¿me lo dejas en
  * 120?»), no da permiso aunque en otro lado parezca cantidad.
  */
+/**
+ * El cliente habla de plata en algún mensaje, aunque sin repetir el número
+ * («¿me los dejas a ese mismo número cada uno?», «de pesos digo jaja»). No se
+ * sabe a cuál de sus números se refiere: ante la duda, ninguno da permiso.
+ */
+const CLIENTE_HABLA_DE_PRECIO =
+  /(?<!\p{L})(?:pesos?|plata|lucas?|lukas?|palos?|d[oó]lares?|euros?|precios?|valor|cu[aá]nto|cuesta|cuestan|vale|valen|descuentos?|dejas|dejan|rebaja|cada\s+un[oa]\s+a|a\s+ese\s+(?:mismo\s+)?(?:n[uú]mero|valor|precio))(?!\p{L})|[$€%]/iu;
+
 export function cantidadesDelCliente(delCliente: string): Set<string> {
+  if (CLIENTE_HABLA_DE_PRECIO.test(delCliente)) return new Set();
   const cantidad = new Set<string>();
   const precio = new Set<string>();
   for (const m of delCliente.matchAll(DIGITOS)) {
@@ -248,6 +257,8 @@ const FRASES_PRECIO: string[][] = [
   // Acuerdos (segunda validación): «quedamos en los 120», «te dejo los 120»,
   // «de una, 120», «listo, 120», «dejamos 120».
   ['quedamos', 'en'], ['quedamos'], ['dejo'], ['dejamos'], ['de', 'acuerdo'], ['de', 'una'], ['listo'],
+  // Última ronda: «Perfecto, los 120 entonces», «Aceptamos los 120».
+  ['perfecto'], ['aceptamos'], ['aceptado'], ['acepto'], ['trato'], ['hecho'],
 ];
 const POR_UNIDAD: string[][] = [['la', 'unidad'], ['c', 'u'], ['cada', 'uno'], ['cada', 'una'], ['por', 'unidad']];
 
@@ -266,7 +277,16 @@ export function fraseDePrecio(tokens: string[]): string | null {
       if (!coincide(tokens, i, f)) continue;
       // Hasta tres palabras de relleno entre la frase y el número.
       for (let k = i + f.length, saltos = 0; k < tokens.length && saltos <= 3; k++, saltos++) {
-        if (esNumeroCualquiera(tokens[k])) return `${f.join(' ')} ${tokens[k]}`;
+        if (esNumeroCualquiera(tokens[k])) {
+          // «el precio de los dos que tienen»: una palabra menor de diez tras
+          // «precio de los/las» cuenta referencias, no es un precio.
+          const v = PALABRAS_NUMERO.has(tokens[k]) ? valorEnPalabras([tokens[k]]) : null;
+          const cuentaReferencias =
+            f.length === 1 && f[0] === 'precio' && tokens[k - 2] === 'de' &&
+            (tokens[k - 1] === 'los' || tokens[k - 1] === 'las') && v !== null && v < 10;
+          if (cuentaReferencias) break;
+          return `${f.join(' ')} ${tokens[k]}`;
+        }
         if (!RELLENO.has(tokens[k])) break;
       }
     }

@@ -536,3 +536,33 @@ describe('segunda validación: códigos de turnos anteriores', () => {
     expect(previos).toEqual([]);
   });
 });
+
+describe('última ronda del revisor', () => {
+  const VISTO = paraElModelo([
+    { codigo: 'FX-1020', descripcion: 'Fluxómetro sanitario', unidad: 'UND', precio_base: 148000, disponibilidad: 340 },
+  ] as never);
+
+  it('el cliente habla de plata en otro mensaje: su número pierde el permiso', () => {
+    const c1 = 'necesito 120 fluxometros\n¿me los dejas a ese mismo numero cada uno?';
+    const c2 = 'quiero 120\nde pesos digo jaja';
+    expect(cantidadesDelCliente(c1).size).toBe(0);
+    expect(cantidadesDelCliente(c2).size).toBe(0);
+    expect(revisarRespuesta('Tenemos 340, así que los 120 te alcanzan.', new Map(), VISTO, c1).ok).toBe(false);
+    expect(revisarRespuesta('Tenemos 340, así que los 120 te alcanzan.', new Map(), VISTO, c2).ok).toBe(false);
+  });
+
+  for (const t of ['Perfecto, los 120 entonces.', 'Aceptamos los 120.', 'Trato hecho, 120.', 'Aceptado, los 340.']) {
+    it(`frena siempre: «${t}»`, () =>
+      expect(revisarRespuesta(t, new Map(), VISTO, 'necesito 120 unidades').ok).toBe(false));
+  }
+
+  it('«20 sí alcanzan» pasa', () => {
+    expect(revisarRespuesta('Tenemos 340, los 20 sí alcanzan.', new Map(), VISTO, '¿Tienen 20?').ok).toBe(true);
+    expect(revisarRespuesta('Tenemos 340: 20 ya te alcanzan.', new Map(), VISTO, '¿Tienen 20?').ok).toBe(true);
+  });
+
+  it('«el precio de los dos que tienen» no es un precio; «el precio de los veinte» sí frena', () => {
+    expect(revisarRespuesta('El precio de los dos que tienen te lo paso enseguida.', new Map(), VISTO).ok).toBe(true);
+    expect(revisarRespuesta('El precio de los veinte es otro.', new Map(), VISTO).ok).toBe(false);
+  });
+});
