@@ -220,6 +220,40 @@ export function paraElModelo(refs: ReferenciaCatalogo[]): string {
   );
 }
 
+/** Códigos con letras y cifras: «SR-3300», «FX1020». Los solo numéricos no (podrían ser cifras). */
+const CODIGO_EN_TEXTO = /(?<![\p{L}\d])[A-Za-z]{1,8}[-_.]?\d[A-Za-z0-9.-]*(?<![.-])/gu;
+const MAX_CODIGOS_PREVIOS = 10;
+
+/**
+ * Los códigos que el catálogo devolvió en turnos anteriores. No se guardan
+ * (`messages` no tiene dónde, y pedirlo sería SQL nuevo): el modelo solo puede
+ * conocerlos por el historial, así que se toman los códigos que aparecen ahí y
+ * se confirman uno por uno con `catalogo_cliente_wa` (código exacto, sin gastar
+ * en la IA). Solo códigos: ni cantidades ni existencias.
+ */
+export async function codigosDeTurnosAnteriores(
+  db: SupabaseClient,
+  contexto: ChatMessage[],
+  yaConsultadas: Map<string, ReferenciaCatalogo>
+): Promise<string[]> {
+  const candidatos = new Set<string>();
+  for (const m of contexto) {
+    for (const c of m.content.match(CODIGO_EN_TEXTO) ?? []) {
+      if (!yaConsultadas.has(c)) candidatos.add(c);
+      if (candidatos.size >= MAX_CODIGOS_PREVIOS) break;
+    }
+  }
+  const confirmados: string[] = [];
+  for (const c of candidatos) {
+    const { data, error } = await db.rpc('catalogo_cliente_wa', { p_texto: c });
+    if (error) continue;
+    const refs = ((data as { referencias?: ReferenciaCatalogo[] } | null)?.referencias ?? []) as ReferenciaCatalogo[];
+    const exacta = refs.find((r) => r.codigo.toLowerCase() === c.toLowerCase());
+    if (exacta) confirmados.push(exacta.codigo);
+  }
+  return confirmados;
+}
+
 export async function atenderConBot(deps: DependenciasBot, conversationId: string): Promise<ResultadoBot> {
   const db = deps.db;
   try {
@@ -349,7 +383,8 @@ export async function atenderConBot(deps: DependenciasBot, conversationId: strin
     }
 
     const delCliente = contexto.filter((m) => m.role === 'user').map((m) => m.content).join('\n');
-    const revision = revisarRespuesta(texto, consultadas, permitidos, delCliente);
+    const previos = await codigosDeTurnosAnteriores(db, contexto, consultadas);
+    const revision = revisarRespuesta(texto, consultadas, permitidos, delCliente, previos);
     if (!revision.ok) {
       console.warn('[bot-clientes] respuesta bloqueada por el revisor:', revision.motivo);
       return pasarAVendedor(deps, conversationId, 'sin_dato', resumenDe(contexto, `Respuesta del bot bloqueada: ${revision.motivo}.`), true);

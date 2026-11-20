@@ -1,10 +1,10 @@
 // El bot de clientes (bloque 6) con dobles: NUNCA llama a Claude ni a Zernio.
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { atenderConBot, MARCA_T9_HISTORIAL, mensajesParaClaude, paraElModelo, type DependenciasBot } from './bot';
+import { atenderConBot, codigosDeTurnosAnteriores, MARCA_T9_HISTORIAL, mensajesParaClaude, paraElModelo, type DependenciasBot } from './bot';
 import { ErrorClaude, llamarClaude, urlMensajes, type RespuestaClaude } from './claude';
 import { costoUsd, leerUso } from './costo';
-import { revisarRespuesta, valorEnPalabras } from './revisor';
+import { cantidadesDelCliente, revisarRespuesta, valorEnPalabras } from './revisor';
 import { t3PasoConAsesor, t9PrecioLista, TEXTOS } from './textos';
 
 type Rpc = { fn: string; args: Record<string, unknown> };
@@ -460,5 +460,79 @@ describe('validación con Claude real: arreglos', () => {
   it('la URL de la API respeta ANTHROPIC_BASE_URL', () => {
     expect(urlMensajes({})).toBe('https://api.anthropic.com/v1/messages');
     expect(urlMensajes({ ANTHROPIC_BASE_URL: 'http://proxy.local:8080/' })).toBe('http://proxy.local:8080/v1/messages');
+  });
+});
+
+describe('segunda validación: el número del cliente como precio no da permiso', () => {
+  const VISTO = paraElModelo([
+    { codigo: 'FX-1020', descripcion: 'Fluxómetro sanitario', unidad: 'UND', precio_base: 148000, disponibilidad: 34 },
+  ] as never);
+  const PIDE_PRECIO = '¿Me lo dejas en 120?';
+
+  for (const t of ['Sí, te dejo los 120', 'De una, quedamos en los 120', 'Ok, 120 cajas a ese valor']) {
+    it(`frena: «${t}» (el cliente dijo «${PIDE_PRECIO}»)`, () =>
+      expect(revisarRespuesta(t, new Map(), VISTO, PIDE_PRECIO).ok).toBe(false));
+  }
+
+  it('sin frase de acuerdo también frena: el 120 del cliente era precio, no cantidad', () => {
+    expect(revisarRespuesta('Hay 120 unidades para ti.', new Map(), VISTO, PIDE_PRECIO).ok).toBe(false);
+  });
+
+  it('el 120 del cliente no es cantidad: lo dijo en una frase de precio', () => {
+    expect(cantidadesDelCliente(PIDE_PRECIO).has('120')).toBe(false);
+    expect(cantidadesDelCliente('¿Tienen 20?').has('20')).toBe(true);
+    expect(cantidadesDelCliente('Necesito 20 unidades').has('20')).toBe(true);
+    // Una vez como precio basta para quitarle el permiso.
+    expect(cantidadesDelCliente('Necesito 120. ¿Me lo dejas en 120?').has('120')).toBe(false);
+  });
+
+  it('las frases de acuerdo frenan aunque la cifra esté permitida', () => {
+    for (const t of ['Listo, 34', 'Quedamos en 34', 'Te dejo los 34', 'De acuerdo, 34', 'Dejamos 34']) {
+      expect(revisarRespuesta(t, new Map(), VISTO, '¿Tienen 34?').ok, t).toBe(false);
+    }
+  });
+
+  it('sigue pasando la cantidad legítima', () => {
+    expect(revisarRespuesta('Tenemos 34 unidades, así que los 20 te alcanzan.', new Map(), VISTO, '¿Tienen 20?').ok).toBe(true);
+  });
+});
+
+describe('segunda validación: códigos de turnos anteriores', () => {
+  it('«SR-3300» del turno anterior pasa (como código entero, no sus cifras)', async () => {
+    catalogo = [{ codigo: 'SR-3300', descripcion: 'Sanitario institucional', unidad: 'UND', precio_base: 412000, disponibilidad: 5 }];
+    const previos = await codigosDeTurnosAnteriores(
+      db(),
+      [
+        { role: 'user', content: 'Busco un sanitario' },
+        { role: 'assistant', content: 'Tenemos el SR-3300, sanitario institucional.' },
+        { role: 'user', content: '¿Y ese viene en blanco?' },
+      ],
+      new Map(),
+    );
+    expect(previos).toEqual(['SR-3300']);
+    expect(revisarRespuesta('Sí, el SR-3300 es blanco.', new Map(), '', '', previos).ok).toBe(true);
+    // Sus cifras sueltas no quedan permitidas.
+    expect(revisarRespuesta('Son 3300 unidades.', new Map(), '', '', previos).ok).toBe(false);
+    // Sin los códigos previos, frena (el caso que se vio en la validación).
+    expect(revisarRespuesta('Sí, el SR-3300 es blanco.', new Map(), '', '', []).ok).toBe(false);
+  });
+
+  it('el bot entero: responde con el código del turno anterior sin volver a buscar', async () => {
+    catalogo = [{ codigo: 'SR-3300', descripcion: 'Sanitario institucional', unidad: 'UND', precio_base: 412000, disponibilidad: 5 }];
+    const d = deps();
+    d.contexto = async () => [
+      { role: 'user', content: 'Busco un sanitario' },
+      { role: 'assistant', content: 'Tenemos el SR-3300, sanitario institucional.' },
+      { role: 'user', content: '¿Y ese viene en blanco?' },
+    ];
+    respuestasClaude = [texto('Sí, el SR-3300 viene en blanco.')];
+    const r = await atenderConBot(d, 'c1');
+    expect(r).toEqual({ accion: 'respondio', texto: 'Sí, el SR-3300 viene en blanco.' });
+  });
+
+  it('un código que el catálogo no confirma no entra', async () => {
+    catalogo = [{ codigo: 'SR-3301', descripcion: 'Otro', unidad: 'UND', precio_base: null }];
+    const previos = await codigosDeTurnosAnteriores(db(), [{ role: 'user', content: '¿Tienen el XX-9999?' }], new Map());
+    expect(previos).toEqual([]);
   });
 });
