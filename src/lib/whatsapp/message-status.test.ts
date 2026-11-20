@@ -39,11 +39,19 @@ describe('canAdvanceMessageStatus', () => {
 
 describe('statusesAdvanceableTo', () => {
   it('lists the current statuses an update may overwrite', () => {
-    expect(statusesAdvanceableTo('read')).toEqual(['sending', 'sent', 'delivered'])
-    expect(statusesAdvanceableTo('delivered')).toEqual(['sending', 'sent'])
-    expect(statusesAdvanceableTo('failed')).toEqual(['sending', 'sent'])
+    expect(statusesAdvanceableTo('read')).toEqual(['sending', 'sent', 'delivered', 'incierto'])
+    expect(statusesAdvanceableTo('delivered')).toEqual(['sending', 'sent', 'incierto'])
+    expect(statusesAdvanceableTo('failed')).toEqual(['sending', 'sent', 'incierto'])
     expect(statusesAdvanceableTo('sending')).toEqual([])
     expect(statusesAdvanceableTo('bogus')).toEqual([])
+  })
+
+  it('ECOVIT (0115): un incierto se resuelve con el evento que llegue tarde, y nadie vuelve a incierto', () => {
+    expect(canAdvanceMessageStatus('incierto', 'sent')).toBe(true)
+    expect(canAdvanceMessageStatus('incierto', 'failed')).toBe(true)
+    expect(canAdvanceMessageStatus('sending', 'incierto')).toBe(false)
+    expect(canAdvanceMessageStatus('sent', 'incierto')).toBe(false)
+    expect(statusesAdvanceableTo('incierto')).toEqual([])
   })
 })
 

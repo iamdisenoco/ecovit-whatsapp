@@ -20,6 +20,7 @@ import {
   ExternalLink,
   Phone,
   Copy,
+  AlertTriangle,
   type LucideIcon,
 } from "lucide-react";
 import { format } from "date-fns";
@@ -155,6 +156,19 @@ function StatusIcon({
       return (
         <span className="inline-flex" title={title ?? undefined}>
           <XCircle className="h-3 w-3 text-red-400" />
+        </span>
+      );
+    case "incierto":
+      // ECOVIT (0115): el proveedor no respondió y no se sabe si salió. No se
+      // reintenta solo (podría llegar dos veces): se dice, para que la
+      // persona lo revise en el celular antes de volver a mandarlo.
+      return (
+        <span
+          className="inline-flex items-center gap-0.5 text-amber-500"
+          title="No se sabe si salió: el proveedor no respondió. Revísalo antes de reenviarlo."
+        >
+          <AlertTriangle className="h-3 w-3" />
+          <span className="text-[10px] font-medium">¿Salió?</span>
         </span>
       );
     default:

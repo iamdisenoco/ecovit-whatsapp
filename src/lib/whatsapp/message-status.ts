@@ -6,11 +6,12 @@ export const MESSAGE_STATUSES: readonly MessageStatus[] = [
   'delivered',
   'read',
   'failed',
+  'incierto',
 ]
 
 const SUCCESS_LADDER: readonly MessageStatus[] = ['sending', 'sent', 'delivered', 'read']
 
-const FAILABLE_FROM: readonly MessageStatus[] = ['sending', 'sent']
+const FAILABLE_FROM: readonly MessageStatus[] = ['sending', 'sent', 'incierto']
 
 export function isMessageStatus(value: unknown): value is MessageStatus {
   return typeof value === 'string' && (MESSAGE_STATUSES as readonly string[]).includes(value)
@@ -18,9 +19,13 @@ export function isMessageStatus(value: unknown): value is MessageStatus {
 
 export function canAdvanceMessageStatus(current: string, incoming: string): boolean {
   if (!isMessageStatus(incoming) || !isMessageStatus(current)) return false
+  // ECOVIT (0115): `incierto` lo pone solo el cron; un evento del proveedor
+  // nunca lleva ahí. Y un `incierto` se resuelve como si siguiera en `sending`.
+  if (incoming === 'incierto') return false
   if (incoming === 'failed') return FAILABLE_FROM.includes(current)
   if (current === 'failed') return false
-  return SUCCESS_LADDER.indexOf(incoming) > SUCCESS_LADDER.indexOf(current)
+  const desde = current === 'incierto' ? 'sending' : current
+  return SUCCESS_LADDER.indexOf(incoming) > SUCCESS_LADDER.indexOf(desde)
 }
 
 export function statusesAdvanceableTo(incoming: string): MessageStatus[] {

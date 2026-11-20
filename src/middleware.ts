@@ -17,7 +17,7 @@ import { rolTieneAcceso, urlIngresoEcovit } from '@/lib/ecovit/ingreso'
 const SIN_SESION = ['/sin-sesion', '/sin-acceso']
 
 /** API que se cuidan solas (firma de Meta/Zernio, secreto del cron). */
-const API_PROPIAS = ['/api/whatsapp/webhook', '/api/whatsapp/meta/webhook', '/api/automations/cron', '/api/flows/cron']
+const API_PROPIAS = ['/api/whatsapp/webhook', '/api/whatsapp/meta/webhook', '/api/whatsapp/cron', '/api/automations/cron', '/api/flows/cron']
 
 /** Por SEGMENTO, no por prefijo de texto (regla de ECOVIT). */
 const enLista = (ruta: string, lista: string[]) =>

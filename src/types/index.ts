@@ -252,7 +252,8 @@ export type ContentType =
   | 'template'
   /** Customer tapped a reply button or list row on a message we sent. */
   | 'interactive';
-export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+/** ECOVIT (0115): `incierto` = quedó en `sending` sin wamid y no se sabe si salió. */
+export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed' | 'incierto';
 
 export interface Message {
   id: string;
