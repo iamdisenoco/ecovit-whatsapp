@@ -7,6 +7,7 @@ import {
 } from '@/lib/whatsapp/meta-api'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { getT } from '@/lib/i18n/translate'
+import { leerFilaWhatsAppConfig } from '@/lib/whatsapp/config-servidor'
 
 const t = getT('Api')
 
@@ -62,11 +63,7 @@ export async function GET() {
     })
   }
 
-  const { data: config } = await supabase
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', accountId)
-    .maybeSingle()
+  const { data: config } = await leerFilaWhatsAppConfig(accountId)
 
   if (!config) {
     return NextResponse.json({

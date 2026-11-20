@@ -6,9 +6,25 @@ vi.mock('@/lib/whatsapp/encryption', () => ({
   decrypt: (v: string) => `plain:${v}`,
 }))
 
+// ECOVIT · bloque 5: `ai_configs` se lee con la clave de servicio (42501 con la
+// sesión), así que el dato de prueba sale por el cliente de servicio.
+const admin = vi.hoisted(() => ({ fila: null as Record<string, unknown> | null }))
+vi.mock('@/lib/flows/admin-client', () => ({
+  supabaseAdmin: () => {
+    const chain = {
+      from: () => chain,
+      select: () => chain,
+      eq: () => chain,
+      maybeSingle: () => Promise.resolve({ data: admin.fila, error: null }),
+    }
+    return chain
+  },
+}))
+
 import { loadAiConfig } from './config'
 
 function dbReturning(row: Record<string, unknown> | null): SupabaseClient {
+  admin.fila = row
   const chain = {
     from: () => chain,
     select: () => chain,

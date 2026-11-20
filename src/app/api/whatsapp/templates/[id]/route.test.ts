@@ -91,6 +91,11 @@ function makeSupabaseMock() {
 
 let supabaseMock = makeSupabaseMock()
 
+// ECOVIT · bloque 5: whatsapp_config se lee con la clave de servicio (con la sesión da 42501).
+vi.mock('@/lib/whatsapp/config-servidor', () => ({
+  leerFilaWhatsAppConfig: async () => ({ data: { id: 'cfg-1', account_id: 'acct-1', phone_number_id: 'PNID-1', waba_id: 'WABA-1', access_token: 'enc-token' }, error: null }),
+}))
+
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => supabaseMock),
 }))

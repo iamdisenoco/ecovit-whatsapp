@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { decrypt } from '@/lib/whatsapp/encryption'
+import { supabaseAdmin } from '@/lib/flows/admin-client'
 import type { AiConfig } from './types'
 
 interface AiConfigRow {
@@ -35,7 +36,10 @@ export async function loadAiConfig(
   opts: { requireActive?: boolean } = {},
 ): Promise<AiConfig | null> {
   const { requireActive = true } = opts
-  const { data, error } = await db
+  // ECOVIT · bloque 5: las llaves de `ai_configs` no se leen con la sesión (42501,
+  // ni la dirección). Se lee con la clave de servicio; `db` queda en la firma por
+  // los llamadores, y la cuenta ya la resolvió la sesión de quien llama.
+  const { data, error } = await supabaseAdmin()
     .from('ai_configs')
     .select(CONFIG_COLUMNS)
     .eq('account_id', accountId)
@@ -99,7 +103,8 @@ export async function loadEmbeddingsKey(
   db: SupabaseClient,
   accountId: string,
 ): Promise<{ key: string | null; corrupt: boolean }> {
-  const { data, error } = await db
+  // ECOVIT: clave de servicio, como `loadAiConfig`.
+  const { data, error } = await supabaseAdmin()
     .from('ai_configs')
     .select('embeddings_api_key')
     .eq('account_id', accountId)

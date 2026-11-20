@@ -10,6 +10,11 @@ import {
   RESUME_MAX_SCAN_PAGES,
 } from './broadcast-resume';
 
+// ECOVIT · bloque 5: whatsapp_config se lee con la clave de servicio (con la sesión da 42501).
+vi.mock('@/lib/whatsapp/config-servidor', () => ({
+  leerFilaWhatsAppConfig: async () => ({ data: { phone_number_id: 'pn-1', access_token: 'tok' }, error: null }),
+}))
+
 vi.mock('@/lib/whatsapp/encryption', () => ({
   decrypt: (v: string) => `decrypted:${v}`,
 }));

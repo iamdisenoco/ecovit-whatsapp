@@ -8,6 +8,7 @@ import {
   type PhoneHealth,
 } from '@/lib/whatsapp/phone-health'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
+import { leerFilaWhatsAppConfig } from '@/lib/whatsapp/config-servidor'
 
 const CACHE_HEADERS = { 'Cache-Control': 'private, max-age=300' }
 
@@ -23,16 +24,12 @@ const EMPTY: Omit<PhoneHealth, 'state'> = {
 
 export async function GET() {
   try {
-    const { supabase, accountId, userId } = await getCurrentAccount()
+    const { accountId, userId } = await getCurrentAccount()
 
     const limit = checkRateLimit(`whatsapp-health:${userId}`, RATE_LIMITS.whatsappHealth)
     if (!limit.success) return rateLimitResponse(limit)
 
-    const { data: config } = await supabase
-      .from('whatsapp_config')
-      .select('phone_number_id, access_token, status')
-      .eq('account_id', accountId)
-      .maybeSingle()
+    const { data: config } = await leerFilaWhatsAppConfig(accountId)
 
     if (!config || config.status !== 'connected' || !config.phone_number_id) {
       return reply({ state: 'disconnected', ...EMPTY })

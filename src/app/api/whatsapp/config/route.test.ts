@@ -74,6 +74,10 @@ function makeSupabaseMock() {
 
 let supabaseMock = makeSupabaseMock()
 
+function storedConfigServicio() {
+  return storedConfig
+}
+
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => supabaseMock),
 }))
@@ -85,8 +89,18 @@ vi.mock('@supabase/supabase-js', () => ({
     from: vi.fn(() => {
       serviceRole.lookups += 1
       const b: Record<string, unknown> = {}
-      for (const m of ['select', 'eq', 'neq']) b[m] = vi.fn(() => b)
-      b.maybeSingle = vi.fn(async () => ({ data: null, error: null }))
+      let columnas = ''
+      for (const m of ['eq', 'neq']) b[m] = vi.fn(() => b)
+      b.select = vi.fn((c: string) => {
+        columnas = c
+        return b
+      })
+      // ECOVIT · bloque 5: las columnas secretas (token, verify_token) se leen con
+      // la clave de servicio; la búsqueda de «¿otro ya tiene el número?» sigue en null.
+      b.maybeSingle = vi.fn(async () => ({
+        data: /access_token|verify_token/.test(columnas) ? storedConfigServicio() : null,
+        error: null,
+      }))
       return b
     }),
   })),

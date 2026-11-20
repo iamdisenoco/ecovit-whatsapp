@@ -3,6 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 let storedConfig: Record<string, unknown> | null = null
 const getPhoneNumberHealth = vi.fn()
 
+// ECOVIT · bloque 5: whatsapp_config se lee con la clave de servicio (con la sesión da 42501).
+vi.mock('@/lib/whatsapp/config-servidor', () => ({
+  leerFilaWhatsAppConfig: async () => ({ data: storedConfig, error: storedConfig ? null : { message: 'sin fila' } }),
+}))
+
 vi.mock('@/lib/auth/account', async () => {
   const actual = await vi.importActual<typeof import('@/lib/auth/account')>('@/lib/auth/account')
   return {

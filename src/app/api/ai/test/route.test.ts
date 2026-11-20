@@ -5,6 +5,15 @@ const h = vi.hoisted(() => ({
   validateCalls: [] as { provider: string; apiKey: string; baseUrl: string | null }[],
 }))
 
+// ECOVIT · bloque 5: ai_configs.api_key se lee con la clave de servicio (42501 con la sesión).
+vi.mock('@/lib/flows/admin-client', () => ({
+  supabaseAdmin: () => ({
+    from: () => ({
+      select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: h.stored, error: null }) }) }),
+    }),
+  }),
+}))
+
 vi.mock('next/server', () => ({
   NextResponse: {
     json: (body: unknown, init?: { status?: number }) => ({

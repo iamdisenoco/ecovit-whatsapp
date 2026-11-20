@@ -6,6 +6,12 @@ const h = vi.hoisted(() => ({
   downloadContentType: 'image/jpeg',
   metaMimeType: 'image/jpeg',
   rateLimitOk: true,
+  visible: true as boolean,
+}))
+
+// ECOVIT · bloque 5: whatsapp_config se lee con la clave de servicio (con la sesión da 42501).
+vi.mock('@/lib/whatsapp/config-servidor', () => ({
+  leerFilaWhatsAppConfig: async () => ({ data: { access_token: 'enc-token' }, error: null }),
 }))
 
 vi.mock('next/server', () => ({
@@ -27,6 +33,8 @@ vi.mock('@/lib/supabase/server', () => ({
       const chain = {
         select: () => chain,
         eq: () => chain,
+        // ECOVIT: ¿quien pide ve un mensaje con este adjunto? (RLS de messages)
+        limit: async () => ({ data: table === 'messages' && h.visible !== false ? [{ id: 'msg-1' }] : [], error: null }),
         maybeSingle: async () => ({
           data: table === 'profiles' && h.accountId ? { account_id: h.accountId } : null,
         }),
@@ -76,6 +84,7 @@ beforeEach(() => {
   h.downloadContentType = 'image/jpeg'
   h.metaMimeType = 'image/jpeg'
   h.rateLimitOk = true
+  h.visible = true
 })
 
 describe('GET /api/whatsapp/media/[mediaId]', () => {
@@ -123,6 +132,12 @@ describe('GET /api/whatsapp/media/[mediaId]', () => {
     h.user = null
     const res = await call()
     expect(res.status).toBe(401)
+  })
+
+  it('ECOVIT: 404 si quien pide no ve ningún mensaje con ese adjunto (el token es de servicio)', async () => {
+    h.visible = false
+    const res = await call()
+    expect(res.status).toBe(404)
   })
 
   it('rejects a caller with no linked account', async () => {

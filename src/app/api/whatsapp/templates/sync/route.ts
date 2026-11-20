@@ -10,6 +10,7 @@ import { normalizeStatus } from '@/lib/whatsapp/template-status-normalize'
 import type { TemplateButton, TemplateSampleValues } from '@/types'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { getT } from '@/lib/i18n/translate'
+import { leerFilaWhatsAppConfig } from '@/lib/whatsapp/config-servidor'
 
 const t = getT('Api')
 
@@ -142,11 +143,7 @@ export async function POST() {
     const limit = checkRateLimit(`whatsapp-admin:${userId}`, RATE_LIMITS.whatsappAdmin)
     if (!limit.success) return rateLimitResponse(limit)
 
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('*')
-      .eq('account_id', accountId)
-      .single()
+    const { data: config, error: configError } = await leerFilaWhatsAppConfig(accountId)
 
     if (configError || !config) {
       return NextResponse.json(

@@ -13,6 +13,7 @@ import {
   removeBusinessReaction,
   setBusinessReaction,
 } from '@/lib/inbox/business-reaction';
+import { leerFilaWhatsAppConfig } from '@/lib/whatsapp/config-servidor';
 
 const t = getT('Api');
 
@@ -99,11 +100,7 @@ export async function POST(request: Request) {
     }
 
     // WhatsApp config + access token. Account-scoped post-multi-user.
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('phone_number_id, access_token')
-      .eq('account_id', accountId)
-      .single();
+    const { data: config, error: configError } = await leerFilaWhatsAppConfig(accountId);
 
     if (configError || !config) {
       return NextResponse.json(

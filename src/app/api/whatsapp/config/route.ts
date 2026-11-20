@@ -131,7 +131,8 @@ export async function GET() {
       )
     }
 
-    const { data: config, error: configError } = await supabase
+    // ECOVIT · bloque 5: el token no se lee con la sesión (42501): clave de servicio.
+    const { data: config, error: configError } = await supabaseAdmin()
       .from('whatsapp_config')
       .select('phone_number_id, waba_id, access_token, status')
       .eq('account_id', accountId)
@@ -389,7 +390,8 @@ export async function POST(request: Request) {
     // around), and we need the stored verify_token — the settings form
     // never shows it, so a save that leaves the field blank must keep it
     // rather than null it out.
-    const { data: existing } = await supabase
+    // ECOVIT · bloque 5: `verify_token` es secreto (42501 con la sesión).
+    const { data: existing } = await supabaseAdmin()
       .from('whatsapp_config')
       .select('id, registered_at, phone_number_id, verify_token')
       .eq('account_id', accountId)

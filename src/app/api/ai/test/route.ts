@@ -7,6 +7,8 @@ import { AiError, type AiProvider } from '@/lib/ai/types'
 import { normalizeOpenAiCompatibleBaseUrl } from '@/lib/ai/providers/openai-compatible'
 import { canReuseStoredAiKey } from '@/lib/ai/stored-key'
 import { getT } from '@/lib/i18n/translate'
+// ECOVIT · bloque 5: `api_key` no se lee con la sesión (42501); clave de servicio.
+import { supabaseAdmin } from '@/lib/flows/admin-client'
 
 const t = getT('Api')
 
@@ -21,7 +23,7 @@ const t = getT('Api')
  */
 export async function POST(request: Request) {
   try {
-    const { supabase, accountId, userId } = await requireRole('admin')
+    const { accountId, userId } = await requireRole('admin')
 
     const limit = checkRateLimit(`ai-test:${userId}`, RATE_LIMITS.adminAction)
     if (!limit.success) return rateLimitResponse(limit)
@@ -49,7 +51,7 @@ export async function POST(request: Request) {
     const rawKey = typeof body.api_key === 'string' ? body.api_key.trim() : ''
     let apiKeyPlain = rawKey
     if (!apiKeyPlain || provider === 'openai_compatible') {
-      const { data } = await supabase
+      const { data } = await supabaseAdmin()
         .from('ai_configs')
         .select('api_key, provider, base_url')
         .eq('account_id', accountId)

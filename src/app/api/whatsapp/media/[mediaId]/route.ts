@@ -5,6 +5,7 @@ import { decrypt } from '@/lib/whatsapp/encryption'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { getT } from '@/lib/i18n/translate'
 import { mediaProxyHeaders } from '@/lib/media/proxy-response-headers'
+import { leerFilaWhatsAppConfig } from '@/lib/whatsapp/config-servidor'
 
 const t = getT('Api')
 
@@ -56,12 +57,21 @@ export async function GET(
       )
     }
 
+    // ECOVIT · bloque 5: el token se lee con la clave de servicio (con la sesión
+    // da 42501), así que la puerta ya no es la RLS de whatsapp_config. Se exige
+    // que quien pide VEA un mensaje con este adjunto (RLS de messages): un
+    // vendedor no baja adjuntos de chats que no son suyos adivinando el id.
+    const { data: visible } = await supabase
+      .from('messages')
+      .select('id')
+      .eq('media_url', `/api/whatsapp/media/${mediaId}`)
+      .limit(1)
+    if (!visible || visible.length === 0) {
+      return NextResponse.json({ error: 'No encontrado' }, { status: 404 })
+    }
+
     // Fetch and decrypt WhatsApp config
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('*')
-      .eq('account_id', accountId)
-      .single()
+    const { data: config, error: configError } = await leerFilaWhatsAppConfig(accountId)
 
     if (configError || !config) {
       return NextResponse.json(

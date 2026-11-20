@@ -12,6 +12,8 @@ import { AiError, type AiProvider } from '@/lib/ai/types'
 import { normalizeOpenAiCompatibleBaseUrl } from '@/lib/ai/providers/openai-compatible'
 import { canReuseStoredAiKey } from '@/lib/ai/stored-key'
 import { getT } from '@/lib/i18n/translate'
+// ECOVIT · bloque 5: `api_key` no se lee con la sesión (42501); clave de servicio.
+import { supabaseAdmin } from '@/lib/flows/admin-client'
 
 const t = getT('Api')
 
@@ -28,9 +30,9 @@ function bad(message: string) {
  */
 export async function GET() {
   try {
-    const { supabase, accountId } = await getCurrentAccount()
+    const { accountId } = await getCurrentAccount()
 
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin()
       .from('ai_configs')
       // `api_key` is selected only to derive `has_key` — it is stripped
       // out below and never returned to the client.
@@ -134,7 +136,7 @@ export async function POST(request: Request) {
     const clearEmbeddingsKey = body.embeddings_api_key === null
 
     // Reuse the stored key when the form didn't send a fresh one.
-    const { data: existing } = await supabase
+    const { data: existing } = await supabaseAdmin()
       .from('ai_configs')
       .select('id, provider, model, base_url, api_key')
       .eq('account_id', accountId)
