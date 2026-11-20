@@ -14,9 +14,19 @@
 
 import { readCappedBody } from '../webhook-body';
 import { ErrorConfiguracion, type ProveedorWhatsApp } from '../proveedor/tipos';
-import type { AlmacenWhatsApp } from './almacen';
+import { EventoEnCurso, type AlmacenWhatsApp } from './almacen';
 import { guardarAdjuntoEntrante } from './adjuntos';
-import { Procesador, type TrabajoMotores } from './procesar';
+import {
+  Procesador,
+  type ResultadoProcesar,
+  type TrabajoMotores,
+  type TrabajoPosterior,
+} from './procesar';
+
+/** Zernio pide < 5 s: lo de antes de responder tiene 3,5 s en total. */
+export const PRESUPUESTO_MS = 3500;
+/** Lo que se le pide a Zernio que espere al responder 503. */
+export const REINTENTAR_EN_S = 30;
 
 export interface DependenciasWebhook {
   /** Puede lanzar `ErrorConfiguracion` (falta WHATSAPP_PROVEEDOR). */
@@ -28,14 +38,49 @@ export interface DependenciasWebhook {
     trabajo: TrabajoMotores,
     proveedor: ProveedorWhatsApp['nombre']
   ) => Promise<void>;
+  /** Tiempo total antes de responder 503 (por defecto PRESUPUESTO_MS). */
+  presupuestoMs?: number;
 }
 
-function json(cuerpo: unknown, status: number): Response {
+function json(
+  cuerpo: unknown,
+  status: number,
+  extra: Record<string, string> = {}
+): Response {
   return new Response(JSON.stringify(cuerpo), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...extra },
   });
 }
+
+/** 503 + Retry-After: Zernio reintenta antes y no lo cuenta como definitivo. */
+function vuelvaLuego(error: string): Response {
+  return json({ error }, 503, { 'Retry-After': String(REINTENTAR_EN_S) });
+}
+
+function correrTrabajos(
+  trabajos: TrabajoPosterior[],
+  proveedor: ProveedorWhatsApp,
+  almacen: AlmacenWhatsApp,
+  deps: DependenciasWebhook
+) {
+  return async () => {
+    for (const trabajo of trabajos) {
+      try {
+        if (trabajo.clase === 'adjunto')
+          await guardarAdjuntoEntrante(proveedor, almacen, trabajo);
+        else await deps.motores(trabajo, proveedor.nombre);
+      } catch (err) {
+        console.error(
+          `[webhook] falló el trabajo posterior (${trabajo.clase}):`,
+          err
+        );
+      }
+    }
+  };
+}
+
+const AGOTADO = Symbol('agotado');
 
 export async function manejarWebhook(
   request: Request,
@@ -55,6 +100,17 @@ export async function manejarWebhook(
     return json({ error: 'WhatsApp no está configurado en el servidor' }, 500);
   }
 
+  // Sin secreto configurado no hay cómo verificar: 503, que Zernio reintenta.
+  // Un 4xx es definitivo para Zernio y se perderían todos los eventos.
+  if (!proveedor.firmaConfigurada()) {
+    console.error(
+      '[webhook] sin secreto de firma configurado: se pide reintentar más tarde'
+    );
+    return vuelvaLuego(
+      'El secreto de firma no está configurado en el servidor'
+    );
+  }
+
   if (!proveedor.verificarFirma(cuerpo, request.headers)) {
     console.warn(
       '[webhook] firma inválida o sin secreto configurado: rechazado'
@@ -71,33 +127,45 @@ export async function manejarWebhook(
 
   const eventos = proveedor.leerWebhook(datos);
   const almacen = deps.almacen();
-  let resultado;
+  const promesa = new Procesador(almacen).procesar(eventos);
+  let temporizador: ReturnType<typeof setTimeout> | undefined;
+  const agotado = new Promise<typeof AGOTADO>((r) => {
+    temporizador = setTimeout(
+      () => r(AGOTADO),
+      deps.presupuestoMs ?? PRESUPUESTO_MS
+    );
+  });
+  let resultado: ResultadoProcesar;
   try {
-    resultado = await new Procesador(almacen).procesar(eventos);
+    const r = await Promise.race([promesa, agotado]);
+    if (r === AGOTADO) {
+      // Lo que ya va sigue corriendo; si termina bien, cierra el evento y sus
+      // trabajos corren igual, y el reintento de Zernio lo verá «procesado».
+      deps.despues(async () => {
+        const tarde = await promesa.catch(() => null);
+        if (tarde)
+          await correrTrabajos(tarde.trabajos, proveedor, almacen, deps)();
+      });
+      console.warn('[webhook] se agotó el tiempo antes de responder: 503');
+      return vuelvaLuego('La base tardó demasiado; reintente');
+    }
+    resultado = r;
   } catch (err) {
+    if (err instanceof EventoEnCurso) {
+      console.warn('[webhook]', err.message);
+      return vuelvaLuego('El evento se está procesando');
+    }
     console.error(
       '[webhook] no se pudo procesar; el proveedor reintentará:',
       err instanceof Error ? err.message : err
     );
     return json({ error: 'No se pudo procesar el evento' }, 500);
+  } finally {
+    clearTimeout(temporizador);
   }
 
   if (resultado.trabajos.length > 0) {
-    const trabajos = resultado.trabajos;
-    deps.despues(async () => {
-      for (const trabajo of trabajos) {
-        try {
-          if (trabajo.clase === 'adjunto')
-            await guardarAdjuntoEntrante(proveedor, almacen, trabajo);
-          else await deps.motores(trabajo, proveedor.nombre);
-        } catch (err) {
-          console.error(
-            `[webhook] falló el trabajo posterior (${trabajo.clase}):`,
-            err
-          );
-        }
-      }
-    });
+    deps.despues(correrTrabajos(resultado.trabajos, proveedor, almacen, deps));
   }
 
   return json(

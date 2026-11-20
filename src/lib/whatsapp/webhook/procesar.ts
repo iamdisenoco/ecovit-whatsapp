@@ -5,7 +5,7 @@
 // pesado (bajar adjuntos y despertar a los motores y al bot). Si algo de lo que
 // guarda falla, lanza: la ruta responde 500, el evento NO queda marcado y
 // Zernio lo reintenta. Lo que se repite no se guarda dos veces: por el `id` del
-// evento (cuando la base tiene dónde anotarlo) y por el wamid del mensaje
+// evento (`registrar_evento_wa`, 0115) y por el wamid del mensaje
 // (índice único `conversation_id, message_id`).
 // ============================================================
 
@@ -15,12 +15,15 @@ import type {
   EventoMensajeEnviado,
   EventoWhatsApp,
   IdentidadRemitente,
+  ReferenciaConversacion,
 } from '../proveedor/tipos';
-import type {
-  AlmacenWhatsApp,
-  ContentType,
-  Inquilino,
-  MensajeNuevo,
+import {
+  EventoEnCurso,
+  type AlmacenWhatsApp,
+  type ContentType,
+  type ConversacionFila,
+  type Inquilino,
+  type MensajeNuevo,
 } from './almacen';
 import {
   MOTIVO_CELULAR,
@@ -89,11 +92,18 @@ function resumen(texto: string | null, tipo: ContentType): string {
 
 export class Procesador {
   private inquilino: Inquilino | null = null;
+  private avisoSinConexion = false;
 
   constructor(private readonly almacen: AlmacenWhatsApp) {}
 
   private async elInquilino(): Promise<Inquilino> {
     this.inquilino ??= await this.almacen.resolverInquilino();
+    if (!this.inquilino.conectadoDesde && !this.avisoSinConexion) {
+      this.avisoSinConexion = true;
+      console.warn(
+        '[webhook] sin fecha de conexión (whatsapp_config.conectado_desde ni WHATSAPP_CONECTADO_DESDE): todo se trata como historia y el bot no se despierta'
+      );
+    }
     return this.inquilino;
   }
 
@@ -106,13 +116,16 @@ export class Procesador {
     };
 
     for (const evento of eventos) {
-      if (
-        evento.eventoId &&
-        (await this.almacen.eventoYaProcesado(evento.eventoId))
-      ) {
+      // Sin id no hay cómo marcarlo: se procesa y deduplica el wamid.
+      const estado = evento.eventoId
+        ? await this.almacen.tomarEvento(evento.eventoId, evento.tipo)
+        : 'nuevo';
+      if (estado === 'procesado') {
         resultado.repetidos++;
         continue;
       }
+      if (estado === 'en_curso') throw new EventoEnCurso(evento.eventoId);
+      const reintento = estado === 'reintento';
 
       // Las muestras de `POST /v1/webhooks/test` no crean contactos ni chats.
       if (evento.prueba || evento.tipo === 'prueba') {
@@ -143,13 +156,19 @@ export class Procesador {
           statusAt: evento.ocurridoEn,
         });
       } else if (evento.tipo === 'mensaje_entrante') {
-        const nuevo = await this.entrante(evento, resultado.trabajos);
+        const nuevo = await this.entrante(
+          evento,
+          resultado.trabajos,
+          reintento
+        );
         if (!nuevo) resultado.repetidos++;
       } else if (evento.tipo === 'mensaje_enviado') {
-        const nuevo = await this.enviado(evento);
+        const nuevo = await this.enviado(evento, reintento);
         if (!nuevo) resultado.repetidos++;
       }
 
+      // Al final: si algo de arriba lanzó, el evento queda sin cerrar y el
+      // reintento lo retoma desde donde quedó.
       if (evento.eventoId)
         await this.almacen.marcarEventoProcesado(evento.eventoId, evento.tipo);
       resultado.procesados++;
@@ -157,10 +176,54 @@ export class Procesador {
     return resultado;
   }
 
+  /**
+   * El chat de este mensaje: primero el que ya tiene guardada la conversación
+   * del proveedor (así un eco con BSUID cae en el chat de un contacto guardado
+   * por teléfono), después por BSUID o teléfono del contacto.
+   */
+  private async chatDe(
+    inq: Inquilino,
+    identidad: IdentidadRemitente,
+    referencia: ReferenciaConversacion
+  ): Promise<{
+    conversacion: ConversacionFila;
+    contactoId: string;
+    contactoCreado: boolean;
+  } | null> {
+    if (referencia.conversacionId) {
+      const porReferencia = await this.almacen.buscarConversacionPorReferencia(
+        inq,
+        referencia
+      );
+      if (porReferencia) {
+        return {
+          conversacion: porReferencia,
+          contactoId: porReferencia.contact_id,
+          contactoCreado: false,
+        };
+      }
+    }
+    // Sin teléfono ni BSUID no se crea un contacto vacío.
+    if (!tieneIdentidad(identidad)) return null;
+    const { contactoId, creado } = await this.almacen.buscarOCrearContacto(
+      inq,
+      identidad
+    );
+    const { conversacion } = await this.almacen.buscarOCrearConversacion(
+      inq,
+      contactoId
+    );
+    if (referencia.conversacionId) {
+      await this.almacen.guardarReferencia(conversacion.id, referencia);
+    }
+    return { conversacion, contactoId, contactoCreado: creado };
+  }
+
   /** `false` si el mensaje ya estaba (repetido por wamid). */
   private async entrante(
     evento: EventoMensajeEntrante,
-    trabajos: TrabajoPosterior[]
+    trabajos: TrabajoPosterior[],
+    reintento: boolean
   ): Promise<boolean> {
     if (!tieneIdentidad(evento.remitente)) {
       // Sin teléfono ni BSUID no hay a quién atarlo; reintentar no lo arregla.
@@ -171,17 +234,9 @@ export class Procesador {
       return true;
     }
     const inq = await this.elInquilino();
-    const { contactoId, creado } = await this.almacen.buscarOCrearContacto(
-      inq,
-      evento.remitente
-    );
-    const { conversacion } = await this.almacen.buscarOCrearConversacion(
-      inq,
-      contactoId
-    );
-    if (evento.referencia.conversacionId) {
-      await this.almacen.guardarReferencia(conversacion.id, evento.referencia);
-    }
+    const chat = await this.chatDe(inq, evento.remitente, evento.referencia);
+    if (!chat) return true;
+    const { conversacion, contactoId, contactoCreado } = chat;
 
     const adjunto = evento.adjuntos[0];
     const tipo = contentTypeDe(adjunto);
@@ -201,9 +256,21 @@ export class Procesador {
       status: 'delivered',
       created_at: evento.enviadoEn,
       reply_to_message_id: responde,
+      desde_celular: false,
     };
-    const insertado = await this.almacen.insertarMensajeSiNuevo(fila);
-    if (!insertado) return false;
+    let insertado = await this.almacen.insertarMensajeSiNuevo(fila);
+    if (!insertado) {
+      // Repetido por wamid. Si es la retoma de ESTE evento (quedó sin cerrar),
+      // la fila entró pero lo que seguía no: se sigue desde ahí. Si es otro
+      // evento con el mismo wamid, es un repetido y no despierta a nadie.
+      if (!reintento) return false;
+      const id = await this.almacen.buscarMensajePorWamid(
+        conversacion.id,
+        evento.mensajeId
+      );
+      if (!id) return false;
+      insertado = { id };
+    }
 
     // Antes de registrar el entrante: `last_inbound_at` todavía es el anterior.
     if (debeDespertarPorInactividad(conversacion, evento.enviadoEn)) {
@@ -231,7 +298,7 @@ export class Procesador {
         clase: 'motores',
         inquilino: inq,
         contactoId,
-        contactoCreado: creado,
+        contactoCreado,
         conversacionId: conversacion.id,
         wamid: evento.mensajeId,
         texto: evento.texto ?? '',
@@ -239,15 +306,21 @@ export class Procesador {
       });
     } else {
       console.info(
-        `[webhook] entrante ${evento.mensajeId} guardado sin despertar al bot (historia o en espera)`
+        `[webhook] entrante ${evento.mensajeId} guardado sin despertar al bot (historia, en espera o sin fecha de conexión)`
       );
     }
     return true;
   }
 
   /** Un mensaje que salió del número: por la API, el celular o el agente de Meta. */
-  private async enviado(evento: EventoMensajeEnviado): Promise<boolean> {
-    if (!tieneIdentidad(evento.destinatario)) {
+  private async enviado(
+    evento: EventoMensajeEnviado,
+    reintento: boolean
+  ): Promise<boolean> {
+    if (
+      !tieneIdentidad(evento.destinatario) &&
+      !evento.referencia.conversacionId
+    ) {
       console.error(
         '[webhook] message.sent sin participante identificable; se descarta:',
         evento.mensajeId
@@ -255,62 +328,80 @@ export class Procesador {
       return true;
     }
     const inq = await this.elInquilino();
-    const { contactoId } = await this.almacen.buscarOCrearContacto(
-      inq,
-      evento.destinatario
-    );
-    const { conversacion } = await this.almacen.buscarOCrearConversacion(
-      inq,
-      contactoId
-    );
-    if (evento.referencia.conversacionId) {
-      await this.almacen.guardarReferencia(conversacion.id, evento.referencia);
+    const chat = await this.chatDe(inq, evento.destinatario, evento.referencia);
+    if (!chat) {
+      console.error(
+        '[webhook] message.sent de un chat desconocido y sin participante; se descarta:',
+        evento.mensajeId
+      );
+      return true;
     }
+    const { conversacion, contactoId } = chat;
 
-    // Un envío nuestro que quedó dudoso se resuelve aquí (plan.md §3, amarillo 7).
-    if (evento.origen === 'api') {
-      const conciliado = await this.almacen.conciliarEnvioPendiente(
+    const sent = {
+      wamid: evento.mensajeId,
+      status: 'sent' as const,
+      failure: null,
+      statusAt: evento.enviadoEn,
+    };
+
+    // Ya existe ese wamid (nuestro envío ya tiene su id, o es un repetido): no
+    // se concilia nada con él, que chocaría con el índice único.
+    const existente = await this.almacen.buscarMensajePorWamid(
+      conversacion.id,
+      evento.mensajeId
+    );
+    if (existente) {
+      await this.almacen.aplicarEstado(inq.accountId, sent);
+      if (!reintento || evento.origen !== 'celular') return false;
+    } else if (evento.origen === 'api') {
+      // Un envío de la bandeja se guarda ANTES de llamar al proveedor; si su
+      // `message.sent` llega antes que la respuesta, aquí se adopta esa fila.
+      const c = await this.almacen.conciliarEnvioPendiente(
         conversacion.id,
         evento.texto,
         evento.mensajeId
       );
-      if (conciliado) return true;
+      if (c === 'conciliado') return true;
+      if (c === 'ambiguo') {
+        // No se adivina: el evento queda anotado (whatsapp_eventos) y los
+        // pendientes siguen su curso (su respuesta, o `incierto`).
+        console.warn(
+          `[webhook] message.sent ${evento.mensajeId}: varios envíos pendientes con el mismo texto; no se concilia`
+        );
+        return true;
+      }
     }
 
-    const adjunto = evento.adjuntos[0];
-    const tipo = contentTypeDe(adjunto);
-    const insertado = await this.almacen.insertarMensajeSiNuevo({
-      conversation_id: conversacion.id,
-      // El agente de Meta es un bot ajeno; lo demás lo mandó una persona del negocio.
-      sender_type: evento.origen === 'agente_meta' ? 'bot' : 'agent',
-      // Desde el celular no hay usuario de la app detrás.
-      // TODO(SQL): marca «desde el celular» en la fila (columna pendiente).
-      sender_id: null,
-      content_type: tipo,
-      content_text: evento.texto,
-      // Saliente: la URL es la que se usó al enviar (en WhatsApp, por enlace).
-      media_url: adjunto?.url ?? null,
-      media_type: adjunto?.mime ?? null,
-      message_id: evento.mensajeId,
-      status: 'sent',
-      created_at: evento.enviadoEn,
-      reply_to_message_id: null,
-    });
-    if (!insertado) {
-      // Ya estaba (nuestro propio envío, o un repetido): el estado «sent» igual vale.
-      await this.almacen.aplicarEstado(inq.accountId, {
-        wamid: evento.mensajeId,
+    if (!existente) {
+      const adjunto = evento.adjuntos[0];
+      const tipo = contentTypeDe(adjunto);
+      const insertado = await this.almacen.insertarMensajeSiNuevo({
+        conversation_id: conversacion.id,
+        // El agente de Meta es un bot ajeno; lo demás lo mandó una persona del negocio.
+        sender_type: evento.origen === 'agente_meta' ? 'bot' : 'agent',
+        // Desde el celular no hay usuario de la app detrás.
+        sender_id: null,
+        content_type: tipo,
+        content_text: evento.texto,
+        // Saliente: la URL es la que se usó al enviar (en WhatsApp, por enlace).
+        media_url: adjunto?.url ?? null,
+        media_type: adjunto?.mime ?? null,
+        message_id: evento.mensajeId,
         status: 'sent',
-        failure: null,
-        statusAt: evento.enviadoEn,
+        created_at: evento.enviadoEn,
+        reply_to_message_id: null,
+        desde_celular: evento.origen === 'celular',
       });
-      return false;
+      if (!insertado) {
+        await this.almacen.aplicarEstado(inq.accountId, sent);
+        return false;
+      }
+      await this.almacen.registrarSaliente(
+        conversacion.id,
+        resumen(evento.texto, tipo)
+      );
     }
-
-    await this.almacen.registrarSaliente(
-      conversacion.id,
-      resumen(evento.texto, tipo)
-    );
 
     if (
       evento.origen === 'celular' &&
@@ -319,7 +410,11 @@ export class Procesador {
       console.info(
         `[webhook] contestado desde el celular en ${conversacion.id}: se calla el bot`
       );
-      await this.almacen.callarBot(conversacion.id, MOTIVO_CELULAR);
+      await this.almacen.callarBot(
+        conversacion.id,
+        evento.mensajeId,
+        MOTIVO_CELULAR
+      );
       await this.almacen.pausarFlujos(inq.accountId, contactoId);
     }
     return true;

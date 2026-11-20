@@ -16,20 +16,30 @@ import type {
 } from '../proveedor/tipos';
 import type {
   AlmacenWhatsApp,
+  Conciliacion,
   ConversacionFila,
   EstadoEntrante,
+  EstadoEvento,
   Inquilino,
   MensajeNuevo,
 } from './almacen';
 
-export interface MensajeMemoria extends MensajeNuevo {
+/** La ventana de conciliación de la base (`almacen-supabase.ts`). */
+const VENTANA_CONCILIAR_MS = 15 * 60 * 1000;
+
+export interface MensajeMemoria extends Omit<MensajeNuevo, 'status'> {
   id: string;
+  status: MensajeNuevo['status'] | 'incierto';
   error_code: number | null;
   error_title: string | null;
 }
 
 export class AlmacenMemoria implements AlmacenWhatsApp {
-  eventos = new Map<string, string>();
+  /** Como `whatsapp_eventos`: tipo, cuándo se tomó y si se cerró. */
+  eventos = new Map<
+    string,
+    { tipo: string; tomadoEn: number; procesado: boolean }
+  >();
   contactos: Array<{
     id: string;
     telefono: string;
@@ -56,15 +66,36 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
     public inquilino: Inquilino = {
       accountId: 'cuenta-1',
       usuarioId: 'usuario-1',
-      conectadoDesde: null,
+      conectadoDesde: '2026-01-01T00:00:00Z',
     }
   ) {}
 
-  async eventoYaProcesado(id: string) {
-    return this.eventos.has(id);
+  /** Imita `registrar_evento_wa`: retoma lo que quedó sin cerrar más de 2 min. */
+  async tomarEvento(id: string, tipo: string): Promise<EstadoEvento> {
+    const previo = this.eventos.get(id);
+    if (!previo) {
+      this.eventos.set(id, { tipo, tomadoEn: Date.now(), procesado: false });
+      return 'nuevo';
+    }
+    if (previo.procesado) return 'procesado';
+    if (Date.now() - previo.tomadoEn < 2 * 60 * 1000) return 'en_curso';
+    previo.tomadoEn = Date.now();
+    return 'reintento';
   }
   async marcarEventoProcesado(id: string, tipo: string) {
-    this.eventos.set(id, tipo);
+    const previo = this.eventos.get(id);
+    this.eventos.set(id, {
+      tipo,
+      tomadoEn: previo?.tomadoEn ?? Date.now(),
+      procesado: true,
+    });
+  }
+  /** En las pruebas: «pasaron los 2 minutos». */
+  vencerEventosEnCurso() {
+    for (const e of this.eventos.values()) if (!e.procesado) e.tomadoEn = 0;
+  }
+  procesado(id: string): boolean {
+    return this.eventos.get(id)?.procesado === true;
   }
   async resolverInquilino() {
     return this.inquilino;
@@ -120,6 +151,21 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
     return c;
   }
 
+  async buscarConversacionPorReferencia(
+    _inq: Inquilino,
+    ref: ReferenciaConversacion
+  ): Promise<ConversacionFila | null> {
+    for (const [convId, r] of this.referencias) {
+      if (
+        r.conversacionId === ref.conversacionId &&
+        (r.cuentaId ?? '') === (ref.cuentaId ?? '')
+      ) {
+        return { ...this.conversacion(convId) };
+      }
+    }
+    return null;
+  }
+
   async guardarReferencia(conversacionId: string, ref: ReferenciaConversacion) {
     this.referencias.set(conversacionId, ref);
   }
@@ -168,18 +214,28 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
     conversacionId: string,
     texto: string | null,
     wamid: string
-  ) {
-    const m = this.mensajes.find(
+  ): Promise<Conciliacion> {
+    if (
+      this.mensajes.some(
+        (m) => m.conversation_id === conversacionId && m.message_id === wamid
+      )
+    ) {
+      return 'ninguno';
+    }
+    const desde = Date.now() - VENTANA_CONCILIAR_MS;
+    const candidatos = this.mensajes.filter(
       (x) =>
         x.conversation_id === conversacionId &&
-        x.status === 'sending' &&
+        (x.status === 'sending' || x.status === 'incierto') &&
         !x.message_id &&
+        Date.parse(x.created_at) >= desde &&
         (x.content_text ?? null) === (texto ?? null)
     );
-    if (!m) return false;
-    m.message_id = wamid;
-    m.status = 'sent';
-    return true;
+    if (candidatos.length === 0) return 'ninguno';
+    if (candidatos.length > 1) return 'ambiguo';
+    candidatos[0].message_id = wamid;
+    candidatos[0].status = 'sent';
+    return 'conciliado';
   }
 
   async registrarEntrante(
@@ -217,7 +273,7 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
     }
   }
 
-  async callarBot(conversacionId: string, motivo: string) {
+  async callarBot(conversacionId: string, _mensajeId: string, motivo: string) {
     const c = this.conversacion(conversacionId);
     c.ai_autoreply_disabled = true;
     c.ai_handoff_summary = motivo;

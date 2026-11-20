@@ -4,12 +4,11 @@
 // Meta (`app/api/whatsapp/meta/webhook`), lo único que crea contactos (por
 // `contactos-supabase.ts`).
 //
-// Dos cosas que la base de hoy no tiene se toleran sin romper (pendientes de
-// SQL, ver el informe del bloque 5):
-//   · la tabla `whatsapp_eventos` para deduplicar por id de evento: sin ella se
-//     deduplica solo por wamid (índice único conversation_id, message_id);
-//   · la columna `conversations.proveedor_conversacion_id`: sin ella no se puede
-//     contestar con Zernio en ese chat, y el envío lo dice.
+// Usa lo que trae la migración 0115: `registrar_evento_wa` y
+// `marcar_evento_procesado_wa` (whatsapp_eventos), las columnas
+// `conversations.proveedor_conversacion_id`/`proveedor_cuenta_id`,
+// `messages.desde_celular`, el estado `incierto`, `callar_bot_por_celular_wa`,
+// `despertar_bot_por_celular_wa` y `whatsapp_config.conectado_desde`.
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -30,82 +29,91 @@ import { buscarOCrearContactoSupabase } from './contactos-supabase';
 import {
   ErrorAlmacen,
   type AlmacenWhatsApp,
+  type Conciliacion,
   type ConversacionFila,
   type EstadoEntrante,
+  type EstadoEvento,
   type Inquilino,
   type MensajeNuevo,
 } from './almacen';
 
 export const BUCKET_ADJUNTOS = 'chat-media';
-export const TABLA_EVENTOS = 'whatsapp_eventos';
 export const COLUMNA_REFERENCIA = 'proveedor_conversacion_id';
+export const COLUMNA_CUENTA_REFERENCIA = 'proveedor_cuenta_id';
 
 const COLUMNAS_CONVERSACION =
-  'id, status, assigned_agent_id, ai_autoreply_disabled, ai_handoff_summary, first_inbound_at, last_inbound_at';
+  'id, contact_id, status, assigned_agent_id, ai_autoreply_disabled, ai_handoff_summary, first_inbound_at, last_inbound_at';
 
 /** Ventana para conciliar un envío dudoso con su `message.sent`. */
 const VENTANA_CONCILIAR_MS = 15 * 60 * 1000;
 
-/** «Esa tabla o columna no existe»: la base todavía no tiene el SQL del bloque 5. */
-export function faltaEnLaBase(
-  error: { code?: string | null; message?: string | null } | null
-): boolean {
-  if (!error) return false;
-  return ['42P01', '42703', 'PGRST204', 'PGRST205'].includes(error.code ?? '');
-}
+/** El inquilino casi no cambia: uno por proceso, cinco minutos. */
+const INQUILINO_TTL_MS = 5 * 60 * 1000;
+let inquilinoCache: { en: number; valor: Inquilino } | null = null;
 
-const avisados = new Set<string>();
-function avisarUnaVez(clave: string, mensaje: string) {
-  if (avisados.has(clave)) return;
-  avisados.add(clave);
-  console.warn(mensaje);
+/** Para las pruebas. */
+export function olvidarInquilino() {
+  inquilinoCache = null;
 }
 
 export class AlmacenSupabase implements AlmacenWhatsApp {
   private accountId: string | null = null;
 
+  /** Para lo que va en after() y puede tardar (Storage): sin el tope de 1,5 s. */
+  private readonly dbLento: SupabaseClient;
+
   constructor(
     private readonly db: SupabaseClient,
-    private readonly env: Entorno = process.env
-  ) {}
+    private readonly env: Entorno = process.env,
+    dbLento?: SupabaseClient
+  ) {
+    this.dbLento = dbLento ?? db;
+  }
 
   // ── Eventos ─────────────────────────────────────────────────────────
 
-  async eventoYaProcesado(eventoId: string): Promise<boolean> {
-    const { data, error } = await this.db
-      .from(TABLA_EVENTOS)
-      .select('id')
-      .eq('id', eventoId)
-      .maybeSingle();
-    if (faltaEnLaBase(error)) {
-      avisarUnaVez(
-        'eventos',
-        `[webhook] falta la tabla ${TABLA_EVENTOS}: se deduplica solo por wamid (pendiente de SQL del bloque 5)`
-      );
-      return false;
-    }
+  /**
+   * `registrar_evento_wa` (0115) devuelve el estado tal cual: `nuevo`,
+   * `reintento` (quedó sin cerrar más de 2 min), `procesado` o `en_curso`.
+   */
+  async tomarEvento(eventoId: string, tipo: string): Promise<EstadoEvento> {
+    const { data, error } = await this.db.rpc('registrar_evento_wa', {
+      p_id: eventoId,
+      p_tipo: tipo,
+    });
     if (error)
       throw new ErrorAlmacen(
-        `No se pudo consultar el evento: ${error.message}`
+        `No se pudo registrar el evento: ${error.message}`
       );
-    return !!data;
+    if (
+      data === 'nuevo' ||
+      data === 'reintento' ||
+      data === 'procesado' ||
+      data === 'en_curso'
+    ) {
+      return data;
+    }
+    throw new ErrorAlmacen(
+      `registrar_evento_wa devolvió algo inesperado: ${JSON.stringify(data)}`
+    );
   }
 
   async marcarEventoProcesado(eventoId: string, tipo: string): Promise<void> {
-    const { error } = await this.db
-      .from(TABLA_EVENTOS)
-      .upsert(
-        { id: eventoId, tipo },
-        { onConflict: 'id', ignoreDuplicates: true }
-      );
-    if (faltaEnLaBase(error)) return;
+    const { error } = await this.db.rpc('marcar_evento_procesado_wa', {
+      p_id: eventoId,
+      p_tipo: tipo,
+    });
     if (error)
-      throw new ErrorAlmacen(`No se pudo marcar el evento: ${error.message}`);
+      throw new ErrorAlmacen(`No se pudo cerrar el evento: ${error.message}`);
   }
 
   // ── La cuenta ───────────────────────────────────────────────────────
 
   async resolverInquilino(): Promise<Inquilino> {
+    if (inquilinoCache && Date.now() - inquilinoCache.en < INQUILINO_TTL_MS) {
+      this.accountId = inquilinoCache.valor.accountId;
+      return inquilinoCache.valor;
+    }
     // ECOVIT tiene una sola cuenta (restricción `accounts_solo_ecovit`).
     const { data: cuentas, error } = await this.db
       .from('accounts')
@@ -122,7 +130,7 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
 
     const { data: config, error: errConfig } = await this.db
       .from('whatsapp_config')
-      .select('user_id, connected_at')
+      .select('user_id, connected_at, conectado_desde')
       .eq('account_id', accountId)
       .maybeSingle();
     if (errConfig)
@@ -151,16 +159,40 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
       );
 
     this.accountId = accountId;
-    return {
+    const valor: Inquilino = {
       accountId,
       usuarioId,
       conectadoDesde:
+        (config?.conectado_desde as string | null | undefined) ??
         (config?.connected_at as string | null | undefined) ??
         (this.env.WHATSAPP_CONECTADO_DESDE?.trim() || null),
     };
+    inquilinoCache = { en: Date.now(), valor };
+    return valor;
   }
 
   // ── Contactos y conversaciones ──────────────────────────────────────
+
+  async buscarConversacionPorReferencia(
+    inq: Inquilino,
+    ref: ReferenciaConversacion
+  ): Promise<ConversacionFila | null> {
+    if (!ref.conversacionId) return null;
+    let q = this.db
+      .from('conversations')
+      .select(COLUMNAS_CONVERSACION)
+      .eq('account_id', inq.accountId)
+      .eq(COLUMNA_REFERENCIA, ref.conversacionId);
+    q = ref.cuentaId
+      ? q.eq(COLUMNA_CUENTA_REFERENCIA, ref.cuentaId)
+      : q.is(COLUMNA_CUENTA_REFERENCIA, null);
+    const { data, error } = await q.limit(1);
+    if (error)
+      throw new ErrorAlmacen(
+        `No se pudo buscar el chat del proveedor: ${error.message}`
+      );
+    return (data?.[0] as ConversacionFila | undefined) ?? null;
+  }
 
   async buscarOCrearContacto(
     inq: Inquilino,
@@ -224,12 +256,16 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
     if (!ref.conversacionId) return;
     const { error } = await this.db
       .from('conversations')
-      .update({ [COLUMNA_REFERENCIA]: ref.conversacionId })
+      .update({
+        [COLUMNA_REFERENCIA]: ref.conversacionId,
+        [COLUMNA_CUENTA_REFERENCIA]: ref.cuentaId,
+      })
       .eq('id', conversacionId);
-    if (faltaEnLaBase(error)) {
-      avisarUnaVez(
-        'referencia',
-        `[webhook] falta conversations.${COLUMNA_REFERENCIA}: no se podrá contestar por Zernio (pendiente de SQL del bloque 5)`
+    // Otra fila ya tiene esa conversación (carrera): se deja la que estaba.
+    if (error && isUniqueViolation(error)) {
+      console.warn(
+        '[webhook] la conversación del proveedor ya está en otro chat:',
+        ref.conversacionId
       );
       return;
     }
@@ -277,13 +313,12 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
       .eq('conversation_id', conversacionId)
       .eq('message_id', wamid)
       .maybeSingle();
-    if (error) {
-      console.error(
-        '[webhook] no se encontró el mensaje citado:',
-        error.message
+    // Si falla, se lanza: un «no existe» falso llevaría a conciliar o a
+    // insertar a ciegas.
+    if (error)
+      throw new ErrorAlmacen(
+        `No se pudo buscar el mensaje por wamid: ${error.message}`
       );
-      return null;
-    }
     return (data?.id as string | undefined) ?? null;
   }
 
@@ -291,19 +326,24 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
     conversacionId: string,
     texto: string | null,
     wamid: string
-  ): Promise<boolean> {
+  ): Promise<Conciliacion> {
+    // Antes que nada: si el wamid ya está, no se le pone a otra fila (chocaría
+    // con el índice único y el webhook daría 500 en cada reintento).
+    if (await this.buscarMensajePorWamid(conversacionId, wamid))
+      return 'ninguno';
+
     let consulta = this.db
       .from('messages')
       .select('id')
       .eq('conversation_id', conversacionId)
-      .eq('status', 'sending')
+      .in('status', ['sending', 'incierto'])
       .is('message_id', null)
       .gte(
         'created_at',
         new Date(Date.now() - VENTANA_CONCILIAR_MS).toISOString()
       )
       .order('created_at', { ascending: true })
-      .limit(1);
+      .limit(2);
     consulta =
       texto === null
         ? consulta.is('content_text', null)
@@ -313,24 +353,27 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
       throw new ErrorAlmacen(
         `No se pudo buscar el envío pendiente: ${error.message}`
       );
-    const id = data?.[0]?.id as string | undefined;
-    if (!id) return false;
+    if (!data || data.length === 0) return 'ninguno';
+    // Dos o más con el mismo texto: no se adivina.
+    if (data.length > 1) return 'ambiguo';
 
     const { data: actualizado, error: errUpd } = await this.db
       .from('messages')
       .update({ message_id: wamid, status: 'sent' })
-      .eq('id', id)
-      .eq('status', 'sending')
+      .eq('id', data[0].id as string)
+      .in('status', ['sending', 'incierto'])
       .is('message_id', null)
       .select('id');
+    if (errUpd && isUniqueViolation(errUpd)) return 'ambiguo';
     if (errUpd)
       throw new ErrorAlmacen(
         `No se pudo conciliar el envío pendiente: ${errUpd.message}`
       );
-    if (!actualizado?.length) return false;
+    // Si la bandeja le puso el wamid en el medio, ya está: es la misma fila.
+    if (!actualizado?.length) return 'conciliado';
     if (this.accountId)
       await applyPendingMessageStatuses(this.db, this.accountId, wamid);
-    return true;
+    return 'conciliado';
   }
 
   async registrarEntrante(
@@ -394,28 +437,26 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
 
   // ── El bot ──────────────────────────────────────────────────────────
 
-  async callarBot(conversacionId: string, motivo: string): Promise<void> {
-    // Si ya estaba callado (alguien lo tomó), no se pisa su nota.
-    const { error } = await this.db
-      .from('conversations')
-      .update({ ai_autoreply_disabled: true, ai_handoff_summary: motivo })
-      .eq('id', conversacionId)
-      .eq('ai_autoreply_disabled', false);
+  /** Con bitácora y sin pisar la nota si alguien ya lo había callado (0115). */
+  async callarBot(
+    conversacionId: string,
+    mensajeId: string,
+    motivo: string
+  ): Promise<void> {
+    const { error } = await this.db.rpc('callar_bot_por_celular_wa', {
+      p_conversacion: conversacionId,
+      p_mensaje_id: mensajeId,
+      p_motivo: motivo,
+    });
     if (error)
       throw new ErrorAlmacen(`No se pudo callar al bot: ${error.message}`);
   }
 
   async despertarBot(conversacionId: string, motivo: string): Promise<void> {
-    const { error } = await this.db
-      .from('conversations')
-      .update({
-        ai_autoreply_disabled: false,
-        ai_handoff_summary: null,
-        ai_reply_count: 0,
-      })
-      .eq('id', conversacionId)
-      .eq('ai_handoff_summary', motivo)
-      .is('assigned_agent_id', null);
+    const { error } = await this.db.rpc('despertar_bot_por_celular_wa', {
+      p_conversacion: conversacionId,
+      p_motivo: motivo,
+    });
     if (error)
       throw new ErrorAlmacen(
         `No se pudo devolver el chat al bot: ${error.message}`
@@ -458,7 +499,7 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
     bytes: Uint8Array,
     mime: string
   ): Promise<boolean> {
-    const { error } = await this.db.storage
+    const { error } = await this.dbLento.storage
       .from(BUCKET_ADJUNTOS)
       .upload(ruta, bytes, {
         contentType: mime,
@@ -482,7 +523,7 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
   ): Promise<void> {
     const cambios: Record<string, string | null> = { media_url: mediaUrl };
     if (texto !== undefined) cambios.content_text = texto;
-    const { error } = await this.db
+    const { error } = await this.dbLento
       .from('messages')
       .update(cambios)
       .eq('id', mensajeId);

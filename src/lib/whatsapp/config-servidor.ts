@@ -17,7 +17,7 @@ import { decrypt } from '@/lib/whatsapp/encryption';
 
 /** Las columnas que no son secretas (las mismas que la 0110 deja leer a la dirección). */
 export const COLUMNAS_PUBLICAS_WHATSAPP_CONFIG =
-  'id, user_id, phone_number_id, waba_id, status, connected_at, created_at, updated_at, registered_at, subscribed_apps_at, last_registration_error, account_id, mirror_inbound_media';
+  'id, user_id, phone_number_id, waba_id, status, connected_at, created_at, updated_at, registered_at, subscribed_apps_at, last_registration_error, account_id, mirror_inbound_media, proveedor, zernio_account_id, conectado_desde';
 
 export interface ConfigWhatsAppPublica {
   id: string;
@@ -33,6 +33,11 @@ export interface ConfigWhatsAppPublica {
   last_registration_error: string | null;
   account_id: string;
   mirror_inbound_media: boolean;
+  /** 0115: 'meta' o 'zernio'. */
+  proveedor: 'meta' | 'zernio';
+  zernio_account_id: string | null;
+  /** 0115: desde cuándo está conectado (obligatorio con Zernio). */
+  conectado_desde: string | null;
 }
 
 export async function leerConfigWhatsApp(
@@ -106,9 +111,7 @@ export interface FilaWhatsAppConfig {
  * misma forma `{ data, error }` que devolvía `.single()` con la sesión (que da
  * 42501). Sin fila, `error` dice que no hay configuración, como `.single()`.
  */
-export async function leerFilaWhatsAppConfig(
-  accountId: string
-): Promise<{
+export async function leerFilaWhatsAppConfig(accountId: string): Promise<{
   data: FilaWhatsAppConfig | null;
   error: { message: string } | null;
 }> {

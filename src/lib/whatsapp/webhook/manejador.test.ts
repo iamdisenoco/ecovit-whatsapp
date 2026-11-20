@@ -55,7 +55,7 @@ describe('POST /api/whatsapp/webhook', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ procesados: 1, repetidos: 0 });
     expect(almacen.mensajes).toHaveLength(1);
-    expect(almacen.eventos.has('evt-1')).toBe(true);
+    expect(almacen.procesado('evt-1')).toBe(true);
     expect(motores).not.toHaveBeenCalled(); // todavía no: va después de responder
     for (const t of cola) await t();
     expect(motores).toHaveBeenCalledTimes(1);
@@ -79,7 +79,7 @@ describe('POST /api/whatsapp/webhook', () => {
     );
   });
 
-  it('401 si el servidor no tiene secreto, aunque la firma sea la del secreto vacío', async () => {
+  it('503 (no 401) si el servidor no tiene secreto, aunque la firma sea la del secreto vacío', async () => {
     const { deps } = armar();
     deps.proveedor = () => new ProveedorSimulado([]);
     const crudo = JSON.stringify(ENTRANTE);
@@ -87,7 +87,7 @@ describe('POST /api/whatsapp/webhook', () => {
       pedido(ENTRANTE, firmarCuerpo(crudo, '')),
       deps
     );
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(503);
   });
 
   it('500 si falta WHATSAPP_PROVEEDOR (que el proveedor reintente)', async () => {
@@ -103,9 +103,12 @@ describe('POST /api/whatsapp/webhook', () => {
     almacen.fallarSiguienteInsert = true;
     const r1 = await manejarWebhook(pedido(ENTRANTE), deps);
     expect(r1.status).toBe(500);
-    expect(almacen.eventos.has('evt-1')).toBe(false);
+    expect(almacen.procesado('evt-1')).toBe(false);
+    // Un reintento dentro de los 2 min: 503 (otro lo tiene), nunca 200 que lo perdería.
+    expect((await manejarWebhook(pedido(ENTRANTE), deps)).status).toBe(503);
     expect(almacen.mensajes).toHaveLength(0);
 
+    almacen.vencerEventosEnCurso(); // el reintento llega pasados los 2 min de la 0115
     const r2 = await manejarWebhook(pedido(ENTRANTE), deps);
     expect(r2.status).toBe(200);
     expect(almacen.mensajes).toHaveLength(1);

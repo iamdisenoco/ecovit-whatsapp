@@ -11,7 +11,10 @@
 // estados) para quien use la interfaz.
 // ============================================================
 
-import { verifyMetaWebhookSignature } from '../webhook-signature';
+import {
+  parseAppSecrets,
+  verifyMetaWebhookSignature,
+} from '../webhook-signature';
 import {
   MetaApiError,
   downloadMedia,
@@ -198,6 +201,10 @@ export class ProveedorMeta implements ProveedorWhatsApp {
   readonly nombre = 'meta' as const;
 
   constructor(private readonly cargarCredenciales: CargarCredencialesMeta) {}
+
+  firmaConfigurada(): boolean {
+    return parseAppSecrets(process.env.META_APP_SECRET).length > 0;
+  }
 
   verificarFirma(cuerpoCrudo: string, encabezados: Encabezados): boolean {
     return verifyMetaWebhookSignature(

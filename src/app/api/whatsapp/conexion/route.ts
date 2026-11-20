@@ -1,16 +1,12 @@
 import { NextResponse } from 'next/server';
 import { getCurrentAccount, toErrorResponse } from '@/lib/auth/account';
 import { hasMinRole } from '@/lib/auth/roles';
-import { supabaseAdmin } from '@/lib/flows/admin-client';
+import { leerConfigWhatsApp } from '@/lib/whatsapp/config-servidor';
 import {
   crearProveedor,
   nombreProveedorOnull,
   type EstadoConexion,
 } from '@/lib/whatsapp/proveedor';
-import {
-  TABLA_EVENTOS,
-  faltaEnLaBase,
-} from '@/lib/whatsapp/webhook/almacen-supabase';
 
 /**
  * GET /api/whatsapp/conexion  (cualquier miembro; los detalles, solo la dirección)
@@ -26,36 +22,36 @@ const CACHE_MS = 60_000;
 let cache: { en: number; proveedor: string; estado: EstadoConexion } | null =
   null;
 
-async function ultimoWebhook(): Promise<{
-  fecha: string | null;
-  nota: string | null;
-}> {
-  const { data, error } = await supabaseAdmin()
-    .from(TABLA_EVENTOS)
-    .select('recibido_en')
-    .order('recibido_en', { ascending: false })
-    .limit(1);
-  if (faltaEnLaBase(error)) {
-    return {
-      fecha: null,
-      nota: 'La base todavía no guarda los eventos del webhook (falta SQL del bloque 5).',
-    };
-  }
+/** `ultimo_webhook_wa()` (0115) se llama con la sesión: la función exige dirección. */
+async function ultimoWebhook(supabase: {
+  rpc: (
+    fn: string
+  ) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
+}): Promise<{ fecha: string | null; nota: string | null }> {
+  const { data, error } = await supabase.rpc('ultimo_webhook_wa');
   if (error)
     return {
       fecha: null,
       nota: 'No se pudo leer la fecha del último webhook.',
     };
-  const fila = data?.[0] as { recibido_en?: string } | undefined;
+  const r = (data ?? {}) as {
+    ultimo_recibido_en?: string | null;
+    sin_cerrar?: number;
+  };
+  const sinCerrar = Number(r.sin_cerrar ?? 0);
   return {
-    fecha: fila?.recibido_en ?? null,
-    nota: fila ? null : 'Todavía no ha llegado ningún webhook.',
+    fecha: r.ultimo_recibido_en ?? null,
+    nota: !r.ultimo_recibido_en
+      ? 'Todavía no ha llegado ningún webhook.'
+      : sinCerrar > 0
+        ? `${sinCerrar} evento(s) quedaron sin cerrar hace más de 2 minutos.`
+        : null,
   };
 }
 
 export async function GET() {
   try {
-    const { accountId, role } = await getCurrentAccount();
+    const { accountId, role, supabase } = await getCurrentAccount();
     const proveedor = nombreProveedorOnull();
     if (!proveedor) {
       return NextResponse.json({
@@ -80,7 +76,8 @@ export async function GET() {
     const base = { proveedor, conectado: estado.conectado };
     if (!hasMinRole(role, 'admin')) return NextResponse.json(base);
 
-    const webhook = await ultimoWebhook();
+    const webhook = await ultimoWebhook(supabase);
+    const config = await leerConfigWhatsApp(accountId).catch(() => null);
     return NextResponse.json({
       ...base,
       detalle: estado.detalle,
@@ -90,8 +87,11 @@ export async function GET() {
       // No es secreto: identifica el número conectado en Zernio.
       cuentaId:
         proveedor === 'zernio'
-          ? process.env.ZERNIO_ACCOUNT_ID?.trim() || null
+          ? config?.zernio_account_id ||
+            process.env.ZERNIO_ACCOUNT_ID?.trim() ||
+            null
           : null,
+      conectadoDesde: config?.conectado_desde ?? null,
       ultimoWebhook: webhook.fecha,
       ultimoWebhookNota: webhook.nota,
     });

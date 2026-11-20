@@ -351,6 +351,20 @@ describe('ProveedorZernio: enviar', () => {
     expect(err).toMatchObject({ dudoso: true });
   });
 
+  it('409 (cuenta desconectada u otro conflicto) es definitivo, no dudoso', async () => {
+    const f = vi.fn(async () =>
+      respuesta(409, {
+        error: 'Account is disconnected',
+        code: 'account_disconnected',
+      })
+    );
+    const err = await zernio(f as unknown as typeof fetch)
+      .enviarTexto(DESTINO, 'Hola', { idempotencia: 'k' })
+      .catch((e) => e);
+    expect(err).toMatchObject({ dudoso: false, estadoHttp: 409 });
+    expect(err.message).toContain('Account is disconnected');
+  });
+
   it('4xx: error definitivo con el código de Zernio', async () => {
     const f = vi.fn(async () =>
       respuesta(400, { error: 'Window closed', code: '131047' })

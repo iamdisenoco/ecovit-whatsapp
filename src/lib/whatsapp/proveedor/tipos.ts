@@ -227,6 +227,12 @@ export class ErrorConfiguracion extends Error {
 export interface ProveedorWhatsApp {
   readonly nombre: NombreProveedor;
 
+  /**
+   * ¿Hay un secreto con qué verificar? Sin él el webhook responde 503 (Zernio
+   * reintenta) y no 401, que para Zernio es definitivo y perdería el evento.
+   */
+  firmaConfigurada(): boolean;
+
   /** `true` solo si la firma del cuerpo crudo es válida. Sin secreto configurado, `false`. */
   verificarFirma(cuerpoCrudo: string, encabezados: Encabezados): boolean;
 

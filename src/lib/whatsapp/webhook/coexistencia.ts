@@ -25,14 +25,16 @@ function ms(iso: string | null | undefined): number | null {
   return Number.isFinite(t) ? t : null;
 }
 
-/** ¿Es historia de antes de conectar el número? Sin fecha de conexión, no se sabe: `false`. */
+/** ¿Es historia de antes de conectar el número? Sin fecha de conexión: `true` (falla cerrado). */
 export function esAnteriorALaConexion(
   enviadoEn: string,
   conectadoDesde: string | null
 ): boolean {
   const envio = ms(enviadoEn);
   const conexion = ms(conectadoDesde);
-  if (envio === null || conexion === null) return false;
+  // Falla cerrado: sin fecha de conexión (o con una fecha ilegible) no se sabe
+  // qué es historia, así que todo lo es. El bot no se despierta por adivinar.
+  if (conexion === null || envio === null) return true;
   return envio < conexion;
 }
 
@@ -44,6 +46,8 @@ export function ecoDelCelularCallaAlBot(
   enviadoEn: string,
   conectadoDesde: string | null
 ): boolean {
+  // Callar es la dirección segura: sin fecha de conexión, el eco calla al bot.
+  if (ms(conectadoDesde) === null) return true;
   return !esAnteriorALaConexion(enviadoEn, conectadoDesde);
 }
 

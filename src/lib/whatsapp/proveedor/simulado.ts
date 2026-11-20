@@ -61,6 +61,10 @@ export class ProveedorSimulado implements ProveedorWhatsApp {
     );
   }
 
+  firmaConfigurada(): boolean {
+    return this.secretos.length > 0;
+  }
+
   verificarFirma(cuerpoCrudo: string, encabezados: Encabezados): boolean {
     return verificarFirmaHmac(
       cuerpoCrudo,

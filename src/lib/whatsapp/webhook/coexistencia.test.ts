@@ -15,8 +15,10 @@ describe('historia de antes de conectar', () => {
     expect(esAnteriorALaConexion('2026-11-20T12:00:01Z', CONEXION)).toBe(false);
   });
 
-  it('sin fecha de conexión no se sabe: no se trata como historia', () => {
-    expect(esAnteriorALaConexion('2026-06-01T10:00:00Z', null)).toBe(false);
+  it('sin fecha de conexión falla cerrado: todo es historia', () => {
+    expect(esAnteriorALaConexion('2026-06-01T10:00:00Z', null)).toBe(true);
+    expect(esAnteriorALaConexion('2026-12-01T10:00:00Z', null)).toBe(true);
+    expect(ecoDelCelularCallaAlBot('2026-12-01T10:00:00Z', null)).toBe(true);
   });
 
   it('un entrante viejo, en espera o marcado como historia no despierta al bot', () => {

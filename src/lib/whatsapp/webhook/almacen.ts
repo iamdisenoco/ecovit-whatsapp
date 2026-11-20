@@ -2,8 +2,9 @@
 // Lo que el webhook necesita de la base, en una interfaz chica.
 //
 // La implementación de verdad (`almacen-supabase.ts`) escribe con la clave de
-// servicio; la de memoria (`almacen-memoria.ts`) es el doble para las pruebas
-// de la ruta y del procesador. El procesador no sabe cuál tiene.
+// servicio y las funciones de la migración 0115; la de memoria
+// (`almacen-memoria.ts`) es el doble para las pruebas. El procesador no sabe
+// cuál tiene.
 // ============================================================
 
 import type {
@@ -16,12 +17,16 @@ export interface Inquilino {
   accountId: string;
   /** `user_id` NOT NULL de contacts/conversations: el dueño de la config o un admin. */
   usuarioId: string;
-  /** Desde cuándo está conectado el número. Lo anterior es historia (coexistencia). */
+  /**
+   * Desde cuándo está conectado el número. Lo anterior es historia
+   * (coexistencia). `null` = no se sabe: todo se trata como historia.
+   */
   conectadoDesde: string | null;
 }
 
 export interface ConversacionFila {
   id: string;
+  contact_id: string;
   status: string | null;
   assigned_agent_id: string | null;
   ai_autoreply_disabled: boolean;
@@ -54,6 +59,8 @@ export interface MensajeNuevo {
   status: 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
   created_at: string;
   reply_to_message_id: string | null;
+  /** RF-M03.10: lo contestó un vendedor desde la app del celular. */
+  desde_celular: boolean;
 }
 
 export interface EstadoEntrante {
@@ -63,14 +70,31 @@ export interface EstadoEntrante {
   statusAt: string | null;
 }
 
+/**
+ * Lo que dice la base de un id de evento al llegar:
+ * - `nuevo`: nunca se vio; este proceso lo toma.
+ * - `reintento`: se tomó antes y quedó sin cerrar (más de 2 min): se retoma y
+ *   se sigue desde donde quedó.
+ * - `procesado`: ya se cerró bien; es un repetido.
+ * - `en_curso`: otro lo tomó hace menos de 2 min y no lo cerró: hay que
+ *   pedirle al proveedor que vuelva más tarde.
+ */
+export type EstadoEvento = 'nuevo' | 'reintento' | 'procesado' | 'en_curso';
+
+export type Conciliacion = 'conciliado' | 'ambiguo' | 'ninguno';
+
 export interface AlmacenWhatsApp {
-  /** ¿Ya se procesó este id de evento? Sin la tabla de eventos, siempre `false`. */
-  eventoYaProcesado(eventoId: string): Promise<boolean>;
-  /** Se marca DESPUÉS de procesar bien: si algo falla, Zernio reintenta y se procesa de nuevo. */
+  tomarEvento(eventoId: string, tipo: string): Promise<EstadoEvento>;
+  /** Se cierra AL FINAL, cuando todo lo de antes de responder salió bien. */
   marcarEventoProcesado(eventoId: string, tipo: string): Promise<void>;
 
   resolverInquilino(): Promise<Inquilino>;
 
+  /** El chat que ya tiene guardada esta conversación del proveedor. */
+  buscarConversacionPorReferencia(
+    inquilino: Inquilino,
+    referencia: ReferenciaConversacion
+  ): Promise<ConversacionFila | null>;
   buscarOCrearContacto(
     inquilino: Inquilino,
     identidad: IdentidadRemitente
@@ -80,13 +104,13 @@ export interface AlmacenWhatsApp {
     contactoId: string
   ): Promise<{ conversacion: ConversacionFila; creada: boolean }>;
 
-  /** Guarda la conversación del proveedor para poder contestar en ella. */
+  /** Guarda la conversación (y la cuenta) del proveedor para poder contestar. */
   guardarReferencia(
     conversacionId: string,
     referencia: ReferenciaConversacion
   ): Promise<void>;
 
-  /** Inserta si no existe (conversation_id, message_id). `null` = ya estaba: es un repetido. */
+  /** Inserta si no existe (conversation_id, message_id). `null` = ya estaba. */
   insertarMensajeSiNuevo(fila: MensajeNuevo): Promise<{ id: string } | null>;
 
   /** Id interno de un mensaje por su wamid, dentro de la conversación. */
@@ -96,14 +120,16 @@ export interface AlmacenWhatsApp {
   ): Promise<string | null>;
 
   /**
-   * Un envío nuestro que quedó dudoso (5xx o tiempo agotado) no tiene wamid. Si
-   * llega su `message.sent`, se le pone el wamid aquí. `true` si concilió uno.
+   * Un envío de la bandeja se guarda en `sending` sin wamid ANTES de llamar
+   * al proveedor; si quedó dudoso pasa a `incierto`. Su `message.sent` le pone
+   * el wamid aquí, pero solo si hay EXACTAMENTE un candidato con ese texto
+   * en la ventana: con dos o más no se adivina (`ambiguo`).
    */
   conciliarEnvioPendiente(
     conversacionId: string,
     texto: string | null,
     wamid: string
-  ): Promise<boolean>;
+  ): Promise<Conciliacion>;
 
   /** Sube el contador de no leídos y el resumen; reabre si estaba cerrada. */
   registrarEntrante(
@@ -112,28 +138,28 @@ export interface AlmacenWhatsApp {
     recibidoEn: string
   ): Promise<{ primerEntrante: boolean }>;
 
-  /** Resumen de la conversación tras un envío (desde el celular, por ejemplo). */
   registrarSaliente(conversacionId: string, resumen: string): Promise<void>;
 
   /** Aplica un estado sin retroceder; si la fila todavía no existe, lo deja pendiente. */
   aplicarEstado(accountId: string, estado: EstadoEntrante): Promise<void>;
 
-  /** Calla al bot en ese chat (el mismo `ai_autoreply_disabled` de «Tomar el control»). */
-  callarBot(conversacionId: string, motivo: string): Promise<void>;
-  /** Lo vuelve a despertar (solo si sigue callado por `motivo` y sin dueño). */
+  /** `callar_bot_por_celular_wa`: calla al bot en ese chat, con bitácora. */
+  callarBot(
+    conversacionId: string,
+    mensajeId: string,
+    motivo: string
+  ): Promise<void>;
+  /** `despertar_bot_por_celular_wa`: solo si sigue callado por `motivo` y sin dueño. */
   despertarBot(conversacionId: string, motivo: string): Promise<void>;
-  /** Pausa los flujos activos del contacto, como cuando contesta un agente. */
   pausarFlujos(accountId: string, contactoId: string): Promise<void>;
 
   anotarCuentaDesconectada(accountId: string): Promise<void>;
 
-  /** Guarda un adjunto en el bucket privado y devuelve la ruta interna. */
   guardarAdjunto(
     ruta: string,
     bytes: Uint8Array,
     mime: string
   ): Promise<boolean>;
-  /** Cambia la URL del adjunto (y el texto, si se da) de un mensaje ya guardado. */
   actualizarAdjunto(
     mensajeId: string,
     mediaUrl: string | null,
@@ -146,5 +172,13 @@ export class ErrorAlmacen extends Error {
   constructor(mensaje: string) {
     super(mensaje);
     this.name = 'ErrorAlmacen';
+  }
+}
+
+/** Otro proceso tiene el evento: 503 y que el proveedor vuelva más tarde. */
+export class EventoEnCurso extends Error {
+  constructor(eventoId: string) {
+    super(`El evento ${eventoId} lo está procesando otra entrega.`);
+    this.name = 'EventoEnCurso';
   }
 }

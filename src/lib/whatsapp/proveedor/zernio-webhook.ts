@@ -180,9 +180,10 @@ export function leerWebhookZernio(json: unknown): EventoWhatsApp[] {
         enviadoEn:
           str(mensaje.sentAt) ?? base.generadoEn ?? new Date().toISOString(),
         enEspera: metadata.standby === true,
-        // TODO(zernio): `coexistence_history` está documentado como `metadata.source`
-        // en la lectura REST de mensajes; que llegue igual en el webhook está sin
-        // verificar en la documentación. La regla de la fecha de conexión cubre el resto.
+        // Solo un REFUERZO: lo que decide si es historia es la fecha de conexión
+        // (`coexistencia.ts`, que falla cerrado). `coexistence_history` está
+        // documentado como `metadata.source` en la lectura REST; que llegue en el
+        // webhook está sin verificar en la documentación (TODO zernio).
         esHistoria: str(metadata.source) === 'coexistence_history',
         // TODO(zernio): el nombre del campo de la cita en `message.received` está sin
         // verificar en la documentación; `quotedMessageId` es el de `message.sent`.

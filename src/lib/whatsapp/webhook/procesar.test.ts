@@ -32,7 +32,7 @@ describe('deduplicación', () => {
     expect(r2.trabajos).toHaveLength(0); // ni bot ni motores la segunda vez
   });
 
-  it('otro id de evento con el mismo wamid (sin tabla de eventos) tampoco duplica', async () => {
+  it('otro id de evento con el mismo wamid tampoco duplica ni despierta a nadie', async () => {
     const a = new AlmacenMemoria();
     await procesar(
       a,
@@ -338,6 +338,7 @@ describe('envíos dudosos y adjuntos', () => {
       status: 'sending',
       created_at: new Date().toISOString(),
       reply_to_message_id: null,
+      desde_celular: false,
       error_code: null,
       error_title: null,
     });

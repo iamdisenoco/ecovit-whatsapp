@@ -90,6 +90,10 @@ export class ProveedorZernio implements ProveedorWhatsApp {
     };
   }
 
+  firmaConfigurada(): boolean {
+    return this.config.secretos.length > 0;
+  }
+
   verificarFirma(cuerpoCrudo: string, encabezados: Encabezados): boolean {
     // `X-Late-Signature` lleva el mismo valor; el código nuevo lee `X-Zernio-*`.
     const firma = leerEncabezado(encabezados, 'x-zernio-signature');
@@ -117,8 +121,9 @@ export class ProveedorZernio implements ProveedorWhatsApp {
   }
 
   /**
-   * Una llamada a Zernio. Un 5xx, un 408, un 409 (la misma clave todavía en
-   * vuelo), un tiempo agotado o la red caída quedan DUDOSOS: pudo haber salido.
+   * Una llamada a Zernio. Un 5xx, un 408, un tiempo agotado o la red caída
+   * quedan DUDOSOS: pudo haber salido. Todo otro 4xx (incluido el 409) es
+   * definitivo y lleva el mensaje real de Zernio.
    */
   private async llamar(
     metodo: 'GET' | 'POST',
@@ -159,7 +164,9 @@ export class ProveedorZernio implements ProveedorWhatsApp {
     if (respuesta.ok) return json;
 
     const estado = respuesta.status;
-    const dudoso = estado >= 500 || estado === 408 || estado === 409;
+    // Un 409 de Zernio es definitivo («cuenta desconectada» u otro conflicto):
+    // no es «no sé si salió», así que no queda dudoso.
+    const dudoso = estado >= 500 || estado === 408;
     // Zernio responde { error, type, code }: los tres ahorran tiempo de diagnóstico.
     const detalle = str(json.error) ?? texto.slice(0, 300) ?? '';
     const codigo = str(json.code);
