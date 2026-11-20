@@ -29,9 +29,9 @@ const MARCA = /\[\[PRECIO:([^\]]+)\]\]/g;
 // lukas», «45 bucks»). Así que:
 //  1. Todo número del texto del modelo, en dígitos o como cantidad en palabras,
 //     pasa SOLO si aparece en lo que devolvieron las herramientas en este turno
-//     (`permitidos`: códigos, existencias, medidas, unidades). Lo que dijo el
-//     cliente NO cuenta: si contara, «¿me lo dejas en 120?» → «sí, en 120»
-//     pasaría. Y `permitidos` es lo que vio el modelo, que no trae precios.
+//     (`permitidos`: códigos, existencias, medidas, unidades), que no trae
+//     precios. Un número que dijo el cliente pasa SOLO como cantidad («los 20
+//     te alcanzan»); como precio no: «¿me lo dejas en 120?» → «sí, en 120» frena.
 //  2. Freno absoluto, aunque el número esté permitido: monedas y símbolos de
 //     plata, porcentajes y descuentos.
 //  3. Una palabra numérica que no es cantidad no frena: «cien por cien
@@ -90,17 +90,37 @@ export function listaBlanca(permitidos: string): { numeros: Set<string> } {
 }
 
 /** null si pasa; si no, por qué se frena. */
-export function numeroNoPermitido(texto: string, permitidos: string): string | null {
+/**
+ * Un número que dijo el CLIENTE pasa solo usado como cantidad: «los 20»,
+ * «20 unidades/piezas/cajas/metros», «20 te alcanzan». Nunca como precio («sí,
+ * en 120»): para eso no hay forma permitida. Lo que el modelo calculó (un
+ * total, una suma) no lo dijo nadie y frena.
+ */
+const CANTIDAD_DESPUES =
+  /^\s*(?:unidades?|und|uds?|piezas?|pzas?|cajas?|metros?|mts?|rollos?|juegos?|(?:te\s+|les?\s+)?(?:alcanzan?|sirven?))(?!\p{L})/iu;
+const CANTIDAD_ANTES = /(?<!\p{L})(?:los|las)\s*$/iu;
+
+function comoCantidad(texto: string, inicio: number, fin: number): boolean {
+  return CANTIDAD_DESPUES.test(texto.slice(fin)) || CANTIDAD_ANTES.test(texto.slice(0, inicio));
+}
+
+export function numeroNoPermitido(texto: string, permitidos: string, delCliente = ''): string | null {
   if (MONEDA.test(texto)) return 'moneda o símbolo de plata';
   if (PORCENTAJE.test(texto)) return 'porcentaje';
   if (DESCUENTO.test(texto)) return 'descuento';
   if (MAGNITUD.test(texto)) return 'cifra con magnitud';
 
   const blanca = listaBlanca(permitidos);
-  for (const n of texto.match(DIGITOS) ?? []) {
-    if (!normalizarNumero(n).some((v) => blanca.numeros.has(v))) {
-      return `el número ${n} no lo devolvió el catálogo`;
+  const cliente = listaBlanca(delCliente);
+  for (const m of texto.matchAll(DIGITOS)) {
+    const n = m[0];
+    const variantes = normalizarNumero(n);
+    if (variantes.some((v) => blanca.numeros.has(v))) continue;
+    const inicio = m.index ?? 0;
+    if (variantes.some((v) => cliente.numeros.has(v)) && comoCantidad(texto, inicio, inicio + n.length)) {
+      continue;
     }
+    return `el número ${n} no lo devolvió el catálogo`;
   }
 
   const tokens = (texto.replace(MODISMOS, ' ').toLowerCase().match(/\p{L}+|\d+(?:[.,]\d+)*/gu) ?? []);
@@ -233,14 +253,16 @@ export function pareceCifraDePlata(texto: string): boolean {
 export function revisarRespuesta(
   texto: string,
   consultadas: Map<string, ReferenciaCatalogo>,
-  permitidos = ''
+  permitidos = '',
+  /** Lo que escribió el cliente: sus números solo valen como cantidad. */
+  delCliente = ''
 ): Revision {
   const limpio = texto.trim();
   if (!limpio) return { ok: false, motivo: 'respuesta vacía' };
 
   // Lo que escribió el modelo, sin las marcas de precio (esas las cambia el código).
   const suyo = limpio.replace(MARCA, ' ');
-  const problema = numeroNoPermitido(suyo, permitidos);
+  const problema = numeroNoPermitido(suyo, permitidos, delCliente);
   if (problema) return { ok: false, motivo: problema };
 
   let fallo: string | null = null;
