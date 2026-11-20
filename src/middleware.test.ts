@@ -3,14 +3,15 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { NextRequest } from "next/server";
 
-// --- Scenario knobs the mock reads -----------------------------------------
-// `mockUser`         — what getUser() resolves to (a refreshed session ⇒ user,
-//                      or null for the logged-out path).
-// `refreshedCookies` — cookies Supabase writes via setAll() during getUser(),
-//                      i.e. the freshly *rotated* auth token. The whole point
-//                      of the test is that these must survive onto whatever
-//                      response the middleware returns — including redirects.
+// --- Lo que el simulacro de Supabase devuelve -------------------------------
+// `mockUser`         — lo que resuelve getUser() (null = sin sesión).
+// `mockPerfil`       — la fila de `perfiles` de ECOVIT (rol y activo).
+// `mockPerfilError`  — un fallo de lectura de `perfiles` (red, 500).
+// `refreshedCookies` — cookies que Supabase escribe por setAll() al refrescar
+//                      el token: tienen que sobrevivir a toda redirección.
 let mockUser: { id: string } | null = null;
+let mockPerfil: { rol: string; activo: boolean } | null = null;
+let mockPerfilError: { message: string } | null = null;
 let refreshedCookies: Array<{
   name: string;
   value: string;
@@ -26,24 +27,30 @@ vi.mock("@supabase/ssr", () => ({
     },
   ) => ({
     auth: {
-      // Mirrors real auth-js: an expired access token is transparently
-      // refreshed inside getUser(), which rotates the refresh token and
-      // pushes the new cookies through setAll() before resolving.
       getUser: async () => {
         if (refreshedCookies.length) opts.cookies.setAll(refreshedCookies);
         return { data: { user: mockUser } };
       },
     },
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          maybeSingle: async () => ({ data: mockPerfil, error: mockPerfilError }),
+        }),
+      }),
+    }),
   }),
 }));
 
-// Imported after the mock is registered.
 const { middleware } = await import("./middleware");
 
 beforeEach(() => {
   process.env.NEXT_PUBLIC_SUPABASE_URL = "https://test.supabase.co";
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = "clave-publicable";
+  process.env.NEXT_PUBLIC_ECOVIT_URL = "https://comercial.ecovit.test";
   mockUser = null;
+  mockPerfil = null;
+  mockPerfilError = null;
   refreshedCookies = [];
 });
 
@@ -55,86 +62,113 @@ const ROTATED = {
   options: { path: "/", httpOnly: true },
 };
 
-describe("middleware — refreshed auth cookies survive redirects", () => {
-  it("carries the rotated token when redirecting a signed-in user off /login", async () => {
-    mockUser = { id: "user-1" };
-    refreshedCookies = [ROTATED];
-
-    const res = await middleware(
-      new NextRequest("https://app.test/login"),
-    );
-
-    // Redirect to /dashboard…
+describe("middleware — sin sesión se entra por ECOVIT", () => {
+  it("manda a /ingresar de ECOVIT con volver = la URL completa", async () => {
+    const res = await middleware(new NextRequest("https://wa.ecovit.test/inbox?c=1"));
     expect(res.status).toBe(307);
-    expect(res.headers.get("location")).toContain("/dashboard");
-    // …and the rotated cookie MUST ride along, otherwise the browser keeps
-    // replaying the now-consumed refresh token and the session wedges until
-    // the user manually clears cookies.
-    expect(res.cookies.get(ROTATED.name)?.value).toBe(ROTATED.value);
+    const destino = new URL(res.headers.get("location")!);
+    expect(destino.origin).toBe("https://comercial.ecovit.test");
+    expect(destino.pathname).toBe("/ingresar");
+    expect(destino.searchParams.get("volver")).toBe("https://wa.ecovit.test/inbox?c=1");
   });
 
-  it("carries the rotated token when redirecting an unauth user to /login", async () => {
-    mockUser = null;
-    // Even on the logged-out path getUser() may emit cookie writes (e.g.
-    // clearing a dead session); those must not be dropped on the redirect.
+  it("conserva el token rotado en la redirección", async () => {
     refreshedCookies = [{ ...ROTATED, value: "cleared" }];
-
-    const res = await middleware(
-      new NextRequest("https://app.test/dashboard"),
-    );
-
+    const res = await middleware(new NextRequest("https://wa.ecovit.test/dashboard"));
     expect(res.status).toBe(307);
-    expect(res.headers.get("location")).toContain("/login");
     expect(res.cookies.get(ROTATED.name)?.value).toBe("cleared");
   });
 
-  it("redirects a signed-in user with an invite token to /join/<token>", async () => {
-    mockUser = { id: "user-1" };
-    refreshedCookies = [ROTATED];
-
-    const res = await middleware(
-      new NextRequest("https://app.test/login?invite=abc123"),
-    );
-
-    expect(res.headers.get("location")).toContain("/join/abc123");
-    expect(res.cookies.get(ROTATED.name)?.value).toBe(ROTATED.value);
+  it("sin NEXT_PUBLIC_ECOVIT_URL cae a la pantalla local /sin-sesion", async () => {
+    delete process.env.NEXT_PUBLIC_ECOVIT_URL;
+    const res = await middleware(new NextRequest("https://wa.ecovit.test/inbox"));
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/sin-sesion");
   });
 
-  it("passes through (no redirect) for a signed-in user on a protected page", async () => {
-    mockUser = { id: "user-1" };
-    refreshedCookies = [ROTATED];
+  it("una API sin sesión responde 401, no redirige", async () => {
+    const res = await middleware(new NextRequest("https://wa.ecovit.test/api/ai/draft"));
+    expect(res.status).toBe(401);
+  });
 
-    const res = await middleware(
-      new NextRequest("https://app.test/dashboard"),
-    );
-
-    // No redirect — the normal NextResponse.next() already carries cookies.
+  it("el webhook pasa sin sesión (se cuida con su firma)", async () => {
+    const res = await middleware(new NextRequest("https://wa.ecovit.test/api/whatsapp/webhook"));
     expect(res.headers.get("location")).toBeNull();
-    expect(res.cookies.get(ROTATED.name)?.value).toBe(ROTATED.value);
+    expect(res.status).toBe(200);
+  });
+
+  it("/sin-acceso y /sin-sesion no piden sesión", async () => {
+    for (const ruta of ["/sin-acceso", "/sin-sesion"]) {
+      const res = await middleware(new NextRequest(`https://wa.ecovit.test${ruta}`));
+      expect(res.headers.get("location")).toBeNull();
+    }
+  });
+
+  it("compara por segmento: /sin-sesionx sí pide sesión", async () => {
+    const res = await middleware(new NextRequest("https://wa.ecovit.test/sin-sesionx"));
+    expect(res.status).toBe(307);
   });
 });
 
-describe("middleware — every dashboard route requires a session", () => {
-  // Read the route group rather than hard-coding a list, so a new page added
-  // under src/app/(dashboard)/ fails here until it is added to
-  // protectedPaths. /flows, /agents and /notifications were missed that way
-  // and rendered a broken page to signed-out visitors instead of redirecting.
+describe("middleware — con sesión manda el perfil de ECOVIT", () => {
+  it.each(["admin", "vendedor"])("%s entra a la bandeja", async (rol) => {
+    mockUser = { id: "u1" };
+    mockPerfil = { rol, activo: true };
+    refreshedCookies = [ROTATED];
+    const res = await middleware(new NextRequest("https://wa.ecovit.test/inbox"));
+    expect(res.headers.get("location")).toBeNull();
+    expect(res.cookies.get(ROTATED.name)?.value).toBe(ROTATED.value);
+  });
+
+  it("administracion va a /sin-acceso", async () => {
+    mockUser = { id: "u1" };
+    mockPerfil = { rol: "administracion", activo: true };
+    const res = await middleware(new NextRequest("https://wa.ecovit.test/inbox"));
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/sin-acceso");
+  });
+
+  it("administracion recibe 403 en la API", async () => {
+    mockUser = { id: "u1" };
+    mockPerfil = { rol: "administracion", activo: true };
+    const res = await middleware(new NextRequest("https://wa.ecovit.test/api/ai/draft"));
+    expect(res.status).toBe(403);
+  });
+
+  it("dado de baja vuelve a ECOVIT, que lo explica", async () => {
+    mockUser = { id: "u1" };
+    mockPerfil = { rol: "vendedor", activo: false };
+    const res = await middleware(new NextRequest("https://wa.ecovit.test/inbox"));
+    expect(new URL(res.headers.get("location")!).origin).toBe("https://comercial.ecovit.test");
+  });
+
+  it("sin perfil vuelve a ECOVIT", async () => {
+    mockUser = { id: "u1" };
+    mockPerfil = null;
+    const res = await middleware(new NextRequest("https://wa.ecovit.test/inbox"));
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/ingresar");
+  });
+
+  it("un fallo al leer perfiles no es una baja: deja pasar", async () => {
+    mockUser = { id: "u1" };
+    mockPerfilError = { message: "500" };
+    const res = await middleware(new NextRequest("https://wa.ecovit.test/inbox"));
+    expect(res.headers.get("location")).toBeNull();
+  });
+});
+
+describe("middleware — toda ruta del tablero pide sesión", () => {
   const dashboardRoutes = readdirSync(join(__dirname, "app", "(dashboard)"), {
     withFileTypes: true,
   })
     .filter((entry) => entry.isDirectory())
     .map((entry) => `/${entry.name}`);
 
-  it("finds the dashboard route group", () => {
-    expect(dashboardRoutes).toContain("/dashboard");
+  it("encuentra el grupo de rutas", () => {
+    expect(dashboardRoutes).toContain("/inbox");
   });
 
-  it.each(dashboardRoutes)("redirects a signed-out visitor from %s to /login", async (route) => {
-    mockUser = null;
-
-    const res = await middleware(new NextRequest(`https://app.test${route}`));
-
+  it.each(dashboardRoutes)("sin sesión, %s va al ingreso de ECOVIT", async (route) => {
+    const res = await middleware(new NextRequest(`https://wa.ecovit.test${route}`));
     expect(res.status).toBe(307);
-    expect(new URL(res.headers.get("location")!).pathname).toBe("/login");
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/ingresar");
   });
 });

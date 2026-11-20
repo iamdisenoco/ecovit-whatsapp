@@ -1,40 +1,59 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { cookieOptions, supabaseKey, supabaseUrl } from '@/lib/supabase/config'
+import { rolTieneAcceso, urlIngresoEcovit } from '@/lib/ecovit/ingreso'
+
+/**
+ * ECOVIT · Conversaciones no tiene usuarios propios: entra quien tiene sesión
+ * en ECOVIT (mismo proyecto de Supabase, misma cookie). Sin sesión, se manda a
+ * la pantalla de ingreso de ECOVIT con `volver` apuntando acá. Con sesión, se
+ * mira `perfiles` (la autoridad de ECOVIT): dado de baja o sin perfil vuelve a
+ * ECOVIT, que lo explica; `administracion` no entra a la bandeja.
+ *
+ * Es una primera barrera: la de verdad son las políticas de la base.
+ */
+
+/** Rutas sin sesión: las pantallas que explican por qué no se entra. */
+const SIN_SESION = ['/sin-sesion', '/sin-acceso']
+
+/** API que se cuidan solas (firma de Meta/Zernio, secreto del cron). */
+const API_PROPIAS = ['/api/whatsapp/webhook', '/api/automations/cron', '/api/flows/cron']
+
+/** Por SEGMENTO, no por prefijo de texto (regla de ECOVIT). */
+const enLista = (ruta: string, lista: string[]) =>
+  lista.some((p) => ruta === p || ruta.startsWith(`${p}/`))
 
 export async function middleware(request: NextRequest) {
+  const ruta = request.nextUrl.pathname
+  if (enLista(ruta, SIN_SESION) || enLista(ruta, API_PROPIAS)) {
+    return NextResponse.next({ request })
+  }
+
   let supabaseResponse = NextResponse.next({ request })
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => request.cookies.set(name, value))
-          supabaseResponse = NextResponse.next({ request })
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          )
-        },
+  const supabase = createServerClient(supabaseUrl, supabaseKey, {
+    cookieOptions,
+    cookies: {
+      getAll() {
+        return request.cookies.getAll()
       },
-    }
-  )
+      setAll(cookiesToSet) {
+        cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
+        supabaseResponse = NextResponse.next({ request })
+        cookiesToSet.forEach(({ name, value, options }) =>
+          supabaseResponse.cookies.set(name, value, options)
+        )
+      },
+    },
+  })
 
-  const { data: { user } } = await supabase.auth.getUser()
+  // Un error que no es de Auth (cookie rota) cuenta como «sin sesión».
+  const user = await supabase.auth
+    .getUser()
+    .then((r) => r.data.user, () => null)
 
-  // getUser() transparently refreshes an expired access token, which
-  // ROTATES the refresh token and writes the new cookies onto
-  // `supabaseResponse` via setAll() above. Any response we return in
-  // place of `supabaseResponse` (every redirect / JSON branch below)
-  // is a fresh object that does NOT carry those Set-Cookie headers, so
-  // the rotated token never reaches the browser. The next request then
-  // replays the old, now-consumed refresh token, the refresh fails, and
-  // the session wedges — the user gets a broken reload after idling and
-  // can only recover by manually clearing cookies (issue #288). Copy the
-  // refreshed cookies onto whatever response we hand back to fix that.
+  // getUser() puede refrescar el token y rotar la cookie (wacrm #288): toda
+  // respuesta distinta de `supabaseResponse` tiene que llevarse esas cookies.
   const withRefreshedCookies = <T extends NextResponse>(response: T): T => {
     supabaseResponse.cookies.getAll().forEach((cookie) => {
       response.cookies.set(cookie)
@@ -42,48 +61,49 @@ export async function middleware(request: NextRequest) {
     return response
   }
 
-  // Auth pages - redirect to dashboard if already logged in.
-  // Exception: when an invite token is in the query string we
-  // send the already-signed-in user to /join/<token> instead so
-  // they can accept the invitation in one click. Without this,
-  // a forwarded invite link to someone who's already signed in
-  // would silently drop them on /dashboard.
-  if (user && (
-    request.nextUrl.pathname === '/login' ||
-    request.nextUrl.pathname === '/signup' ||
-    request.nextUrl.pathname === '/forgot-password'
-  )) {
-    const url = request.nextUrl.clone()
-    const inviteToken = request.nextUrl.searchParams.get('invite')
-    if (
-      inviteToken &&
-      (request.nextUrl.pathname === '/login' ||
-        request.nextUrl.pathname === '/signup')
-    ) {
-      url.pathname = `/join/${encodeURIComponent(inviteToken)}`
-      url.search = ''
-    } else {
-      url.pathname = '/dashboard'
-      url.search = ''
+  const esApi = ruta === '/api' || ruta.startsWith('/api/')
+
+  if (!user) {
+    if (esApi) {
+      return withRefreshedCookies(
+        NextResponse.json({ error: 'Sin sesión' }, { status: 401 })
+      )
     }
+    const destino = urlIngresoEcovit(request.nextUrl.href)
+    const url = destino ? new URL(destino) : new URL('/sin-sesion', request.url)
     return withRefreshedCookies(NextResponse.redirect(url))
   }
 
-  // Protected pages - redirect to login if not authenticated
-  // Every top-level route under src/app/(dashboard)/ belongs here —
-  // middleware.test.ts reads that directory and fails on a missing one.
-  const protectedPaths = ['/dashboard', '/inbox', '/contacts', '/pipelines', '/broadcasts', '/automations', '/flows', '/agents', '/notifications', '/settings']
-  if (!user && protectedPaths.some(path => request.nextUrl.pathname.startsWith(path))) {
-    const url = request.nextUrl.clone()
-    url.pathname = '/login'
+  // Con sesión: el perfil de ECOVIT decide. Un fallo de lectura NO es una baja
+  // (ECOVIT, HU-17): se deja pasar y mandan las políticas de la base.
+  const { data: perfil, error } = await supabase
+    .from('perfiles')
+    .select('rol, activo')
+    .eq('auth_user_id', user.id)
+    .maybeSingle()
+
+  if (error) return supabaseResponse
+
+  if (!perfil || !perfil.activo) {
+    // ECOVIT cierra la sesión y dice por qué (baja o sin perfil).
+    if (esApi) {
+      return withRefreshedCookies(
+        NextResponse.json({ error: 'Sin acceso' }, { status: 403 })
+      )
+    }
+    const destino = urlIngresoEcovit()
+    const url = destino ? new URL(destino) : new URL('/sin-sesion', request.url)
     return withRefreshedCookies(NextResponse.redirect(url))
   }
 
-  // API routes that need auth (not webhooks)
-  if (!user && request.nextUrl.pathname.startsWith('/api/whatsapp/') &&
-      !request.nextUrl.pathname.includes('/webhook')) {
+  if (!rolTieneAcceso(perfil.rol)) {
+    if (esApi) {
+      return withRefreshedCookies(
+        NextResponse.json({ error: 'Tu rol no tiene acceso a Conversaciones' }, { status: 403 })
+      )
+    }
     return withRefreshedCookies(
-      NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      NextResponse.redirect(new URL('/sin-acceso', request.url))
     )
   }
 
@@ -92,6 +112,6 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|icon|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|txt|xml|webmanifest)$).*)',
   ],
 }

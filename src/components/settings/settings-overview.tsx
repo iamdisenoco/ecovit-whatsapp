@@ -7,7 +7,6 @@ import { useTranslations } from 'next-intl';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { useTheme } from '@/hooks/use-theme';
-import { CURRENCIES } from '@/lib/currency';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
@@ -17,8 +16,6 @@ import { SettingsChip, StatusDot } from './settings-chip';
 import { ROLE_META } from './role-meta';
 
 interface OverviewCounts {
-  members: number | null;
-  pendingInvites: number | null;
   templates: number | null;
   templatesPending: number | null;
   tags: number | null;
@@ -35,9 +32,8 @@ export function SettingsOverview({
 }: {
   onSelect: (section: SettingsSection) => void;
 }) {
-  const { user, profile, accountId, accountRole, defaultCurrency, canManageMembers } =
-    useAuth();
-  const { mode, theme } = useTheme();
+  const { user, profile, accountId, accountRole } = useAuth();
+  const { mode } = useTheme();
   const t = useTranslations('Settings.overview');
   const tRoles = useTranslations('Settings.roles');
   const tSections = useTranslations('Settings.sections');
@@ -61,14 +57,8 @@ export function SettingsOverview({
     // Cheap counts — resolve fast, render immediately.
     (async () => {
       setCountsLoading(true);
-      const [membersRes, invitesRes, templatesTotal, templatesPending, tagsRes, fieldsRes] =
+      const [templatesTotal, templatesPending, tagsRes, fieldsRes] =
         await Promise.allSettled([
-          fetch('/api/account/members', { cache: 'no-store' }).then((r) => r.json()),
-          canManageMembers
-            ? fetch('/api/account/invitations', { cache: 'no-store' }).then((r) =>
-                r.json(),
-              )
-            : Promise.resolve(null),
           supabase
             .from('message_templates')
             .select('id', { count: 'exact', head: true })
@@ -87,20 +77,7 @@ export function SettingsOverview({
 
       if (cancelled) return;
 
-      const members =
-        membersRes.status === 'fulfilled' && Array.isArray(membersRes.value?.members)
-          ? membersRes.value.members.length
-          : null;
-      const pendingInvites =
-        invitesRes.status === 'fulfilled' &&
-        invitesRes.value &&
-        Array.isArray(invitesRes.value.invitations)
-          ? invitesRes.value.invitations.length
-          : null;
-
       setCounts({
-        members,
-        pendingInvites,
         templates:
           templatesTotal.status === 'fulfilled'
             ? templatesTotal.value.count ?? null
@@ -138,16 +115,13 @@ export function SettingsOverview({
     return () => {
       cancelled = true;
     };
-  }, [user?.id, accountId, canManageMembers]);
+  }, [user?.id, accountId]);
 
   const displayName = profile?.full_name || profile?.email || t('yourAccount');
   const initial = (profile?.full_name || profile?.email || 'U').charAt(0).toUpperCase();
   const roleMeta = accountRole ? ROLE_META[accountRole] : null;
   const RoleIcon = roleMeta?.icon;
 
-  const currencyLabel =
-    CURRENCIES.find((c) => c.code === defaultCurrency)?.label ?? defaultCurrency;
-  const themeName = tAppearance(`themes.${theme}.name`);
 
   // Per-tile loading + subtitle. `null` counts render as a graceful
   // fallback so a single failed query never blanks a tile.
@@ -172,18 +146,6 @@ export function SettingsOverview({
       ),
     },
     {
-      section: 'members',
-      loading: countsLoading,
-      subtitle:
-        counts?.members == null
-          ? t('viewTeamMembers')
-          : `${t('membersCount', { count: counts.members })}${
-              counts.pendingInvites
-                ? ` · ${t('pendingInvites', { count: counts.pendingInvites })}`
-                : ''
-            }`,
-    },
-    {
       section: 'templates',
       loading: countsLoading,
       subtitle:
@@ -194,11 +156,6 @@ export function SettingsOverview({
                 ? ` · ${t('pendingReview', { count: counts.templatesPending })}`
                 : ''
             }`,
-    },
-    {
-      section: 'deals',
-      loading: false,
-      subtitle: `${defaultCurrency} — ${currencyLabel}`,
     },
     {
       section: 'fields',
@@ -213,7 +170,7 @@ export function SettingsOverview({
     {
       section: 'appearance',
       loading: false,
-      subtitle: t('appearance', { mode: tAppearance(`modes.${mode}`), theme: themeName }),
+      subtitle: tAppearance(`modes.${mode}`),
     },
   ];
 

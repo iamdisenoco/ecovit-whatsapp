@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { AuthProvider, useAuth } from "@/hooks/use-auth";
+import { urlIngresoEcovit } from "@/lib/ecovit/ingreso";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { AccountAccessAlert } from "@/components/layout/account-access-alert";
@@ -16,7 +16,6 @@ import { BrowserNotificationsListener } from "@/components/notifications/browser
 
 function DashboardShellInner({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
-  const router = useRouter();
   const t = useTranslations("DashboardShell");
 
   // Sidebar drawer state — only used on mobile. On lg+ the sidebar is
@@ -25,10 +24,12 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
 
   useEffect(() => {
+    // Normalmente el middleware ya lo mandó a ECOVIT; esto cubre la sesión
+    // que se cierra con la pestaña abierta.
     if (!loading && !user) {
-      router.push("/login");
+      window.location.href = urlIngresoEcovit(window.location.href) ?? "/sin-sesion";
     }
-  }, [user, loading, router]);
+  }, [user, loading]);
 
   if (loading) {
     return (

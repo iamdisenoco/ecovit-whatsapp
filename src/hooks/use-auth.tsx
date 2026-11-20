@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { urlIngresoEcovit } from "@/lib/ecovit/ingreso";
 import type { User } from "@supabase/supabase-js";
 import { DEFAULT_CURRENCY } from "@/lib/currency";
 import {
@@ -386,7 +387,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setProfile(null);
     setAccount(null);
-    window.location.href = "/login";
+    // La sesión es la de ECOVIT: cerrarla acá la cierra allá también.
+    window.location.href = urlIngresoEcovit() ?? "/sin-sesion";
   }, []);
 
   const refreshProfile = useCallback(async () => {
@@ -463,7 +465,7 @@ export function useAuth(): AuthContextValue {
       loading: false,
       profileLoading: false,
       signOut: async () => {
-        window.location.href = "/login";
+        window.location.href = urlIngresoEcovit() ?? "/sin-sesion";
       },
       refreshProfile: async () => {},
       account: null,
