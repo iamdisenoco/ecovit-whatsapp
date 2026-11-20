@@ -3,12 +3,10 @@
 // respuesta automática, en el mismo orden que wacrm (los flujos ganan; una
 // automatización que esperaba respuesta la toma; si nadie la tomó, la IA).
 //
-// Cada motor tiene su propio try/catch y nunca lanza. Ojo, hasta el bloque 6:
-// los motores todavía ENVÍAN por Meta (`lib/flows/meta-send.ts`,
-// `lib/automations/meta-send.ts`, `lib/ai/auto-reply.ts`). Con Zernio fallan al
-// buscar las credenciales de Meta y lo dicen en el registro; la IA está apagada
-// por defecto (mínimo 7) y los flujos y automatizaciones solo los crea la
-// dirección.
+// Cada motor tiene su propio try/catch y nunca lanza. Fuera de Meta, los motores
+// envían por la interfaz del proveedor (`lib/whatsapp/enviar-motor.ts`). La IA
+// (el bot de clientes, `lib/bot-clientes/`) está apagada por defecto (mínimo 7)
+// y los flujos y automatizaciones solo los crea la dirección.
 // ============================================================
 
 import {
@@ -17,12 +15,12 @@ import {
 } from '@/lib/automations/engine';
 import { dispatchInboundToFlows } from '@/lib/flows/engine';
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply';
-import type { NombreProveedor } from '../proveedor/tipos';
 import type { TrabajoMotores } from './procesar';
 
 export async function despacharMotores(
-  trabajo: TrabajoMotores,
-  proveedor: NombreProveedor
+  // El manejador también pasa el proveedor; desde el bloque 6 ningún motor
+  // depende de él (los envíos eligen solos, `enviar-motor.ts`).
+  trabajo: TrabajoMotores
 ): Promise<void> {
   const { inquilino, contactoId, conversacionId, wamid, texto } = trabajo;
   const accountId = inquilino.accountId;
@@ -72,8 +70,8 @@ export async function despacharMotores(
       conversationId: conversacionId,
       contactId: contactoId,
       configOwnerUserId: inquilino.usuarioId,
-      // El «escribiendo…» es de Meta; con otro proveedor no se pide.
-      inboundMessageId: proveedor === 'meta' ? wamid : undefined,
+      // Si el cliente escribe otra vez mientras el bot piensa, se descarta esta.
+      inboundMessageId: wamid,
     });
   }
 }
