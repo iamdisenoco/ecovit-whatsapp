@@ -24,6 +24,7 @@ import {
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils';
 import type { MessageTemplate } from '@/types';
+import { enviarPlantillaATelefono } from './enviar-motor';
 
 /** Thrown on a caller-visible failure; route maps it. */
 export class BroadcastError extends Error {
@@ -47,6 +48,8 @@ export interface BroadcastPlan {
   broadcastId: string;
   templateName: string;
   templateLanguage: string;
+  /** ECOVIT: el proveedor que manda. Fuera de Meta no hay credenciales en el plan. */
+  proveedor: 'meta' | 'otro';
   phoneNumberId: string;
   accessToken: string;
   templateRow: MessageTemplate | null;
@@ -77,7 +80,22 @@ export async function deliverBroadcast(
     let sentMessageId: string | null = null;
     let lastError: string | null = null;
 
-    for (const variant of variants) {
+    // ECOVIT: con Zernio (o el simulado), por la interfaz del proveedor; la
+    // clave de idempotencia es la fila del destinatario (un reintento del
+    // mismo destinatario no manda dos).
+    if (plan.proveedor === 'otro') {
+      const r = await enviarPlantillaATelefono({
+        telefono: recipient.phone,
+        nombre: plan.templateName,
+        idioma: plan.templateLanguage,
+        parametros: recipient.params,
+        idempotencia: recipient.recipientRowId,
+      });
+      if (r.ok) sentMessageId = r.wamid;
+      else lastError = r.error;
+    }
+
+    for (const variant of plan.proveedor === 'otro' ? [] : variants) {
       try {
         const result = await sendTemplateMessage({
           phoneNumberId: plan.phoneNumberId,

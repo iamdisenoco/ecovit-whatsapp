@@ -16,6 +16,7 @@
 // wizard still owns that; this makes an abandoned one recoverable.
 // ============================================================
 
+import { nombreProveedor } from '@/lib/whatsapp/proveedor/nombre';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { BroadcastError, type BroadcastPlan } from '@/lib/whatsapp/broadcast-core';
@@ -226,8 +227,13 @@ export async function planBroadcastResume(
     );
   }
 
-  const { data: config, error: configError } = await leerFilaWhatsAppConfig(accountId);
-  if (configError || !config) {
+  // ECOVIT: fuera de Meta las llaves viven en el entorno (Zernio); no hace falta
+  // la fila de Meta para mandar.
+  const esMeta = nombreProveedor() === 'meta';
+  const { data: config, error: configError } = esMeta
+    ? await leerFilaWhatsAppConfig(accountId)
+    : { data: null, error: null };
+  if (esMeta && (configError || !config)) {
     throw new BroadcastError(
       'whatsapp_not_configured',
       'WhatsApp not configured. Please set up your WhatsApp integration first.',
@@ -253,8 +259,9 @@ export async function planBroadcastResume(
     broadcastId,
     templateName: broadcast.template_name,
     templateLanguage: resolvedTemplate.language,
-    phoneNumberId: config.phone_number_id,
-    accessToken: decrypt(config.access_token),
+    proveedor: esMeta ? 'meta' : 'otro',
+    phoneNumberId: config?.phone_number_id ?? '',
+    accessToken: config?.access_token ? decrypt(config.access_token) : '',
     templateRow: resolvedTemplate.row,
     planned: slice.map((row) => ({
       recipientRowId: row.id,

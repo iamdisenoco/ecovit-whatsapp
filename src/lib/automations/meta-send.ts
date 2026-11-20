@@ -18,6 +18,8 @@ import {
 } from '@/lib/whatsapp/template-body'
 import { supabaseAdmin } from './admin-client'
 import { getT } from '@/lib/i18n/translate'
+import { nombreProveedor } from '@/lib/whatsapp/proveedor/nombre'
+import { enviarDesdeMotor } from '@/lib/whatsapp/enviar-motor'
 
 const t = getT('LibErrors')
 
@@ -115,6 +117,42 @@ type SendInput =
 
 async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
+
+  // ECOVIT: con Zernio (o el simulado) se manda por la interfaz del proveedor.
+  if (nombreProveedor() !== 'meta') {
+    if (input.kind === 'text') {
+      return enviarDesdeMotor({
+        accountId: input.accountId,
+        conversationId: input.conversationId,
+        contactId: input.contactId,
+        pedido: { clase: 'texto', texto: input.text },
+        fila: { content_type: 'text', content_text: input.text },
+        previa: input.text,
+      })
+    }
+    const fila = (
+      await resolveTemplateRow(db, input.accountId, input.templateName, input.language)
+    ).row
+    const texto = templateContentText(fila, input.params ?? [])
+    return enviarDesdeMotor({
+      accountId: input.accountId,
+      conversationId: input.conversationId,
+      contactId: input.contactId,
+      pedido: {
+        clase: 'plantilla',
+        nombre: input.templateName,
+        idioma: input.language || fila?.language || 'es',
+        parametros: input.params ?? [],
+      },
+      fila: {
+        content_type: 'template',
+        content_text: texto,
+        template_name: input.templateName,
+        media_url: templateHeaderMediaUrl(fila),
+      },
+      previa: texto ?? `[template:${input.templateName}]`,
+    })
+  }
 
   // Scope the contact + config lookups by account_id, not user_id.
   // The engine uses the service-role client (bypassing RLS); without

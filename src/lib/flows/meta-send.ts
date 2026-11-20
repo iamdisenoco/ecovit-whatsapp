@@ -17,6 +17,8 @@ import { resolveContactSendTarget } from '@/lib/whatsapp/wa-identity'
 import { assertConversationInAccount } from '@/lib/whatsapp/conversation-scope'
 import { supabaseAdmin } from './admin-client'
 import { getT } from '@/lib/i18n/translate'
+import { nombreProveedor } from '@/lib/whatsapp/proveedor/nombre'
+import { enviarDesdeMotor, rechazarInteractivo } from '@/lib/whatsapp/enviar-motor'
 
 const t = getT('LibErrors')
 
@@ -92,6 +94,17 @@ interface SendTextEngineArgs {
 export async function engineSendText(
   args: SendTextEngineArgs,
 ): Promise<{ whatsapp_message_id: string }> {
+  // ECOVIT: con Zernio (o el simulado) se manda por la interfaz del proveedor.
+  if (nombreProveedor() !== 'meta') {
+    return enviarDesdeMotor({
+      accountId: args.accountId,
+      conversationId: args.conversationId,
+      contactId: args.contactId,
+      pedido: { clase: 'texto', texto: args.text },
+      fila: { content_type: 'text', content_text: args.text, ai_generated: args.aiGenerated ?? false },
+      previa: args.text,
+    })
+  }
   const db = supabaseAdmin()
 
   const { data: contact, error: contactErr } = await db
@@ -212,6 +225,24 @@ interface SendMediaEngineArgs {
 export async function engineSendMedia(
   args: SendMediaEngineArgs,
 ): Promise<{ whatsapp_message_id: string }> {
+  // ECOVIT: con Zernio (o el simulado) se manda por la interfaz del proveedor.
+  // La URL la configuró la dirección en el flujo (solo ella los edita, 0112).
+  if (nombreProveedor() !== 'meta') {
+    return enviarDesdeMotor({
+      accountId: args.accountId,
+      conversationId: args.conversationId,
+      contactId: args.contactId,
+      pedido: {
+        clase: 'media',
+        tipo: args.kind,
+        url: args.link,
+        texto: args.caption ?? null,
+        nombreArchivo: args.filename ?? null,
+      },
+      fila: { content_type: args.kind, content_text: args.caption ?? null },
+      previa: args.caption?.trim() || `[${args.kind}]`,
+    })
+  }
   const db = supabaseAdmin()
 
   const { data: contact, error: contactErr } = await db
@@ -371,6 +402,9 @@ type SendInput =
 async function sendInteractiveViaMeta(
   input: SendInput,
 ): Promise<{ whatsapp_message_id: string }> {
+  // ECOVIT: fuera de Meta, botones y listas no salen; se rechaza antes de
+  // guardar nada (TODO(zernio): verificar con Zernio, plan-wacrm).
+  if (nombreProveedor() !== 'meta') rechazarInteractivo()
   const db = supabaseAdmin()
 
   // Scope the contact + whatsapp_config lookups by account_id —

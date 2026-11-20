@@ -1,3 +1,6 @@
+import { randomUUID } from 'node:crypto'
+import { nombreProveedor } from '@/lib/whatsapp/proveedor/nombre'
+import { enviarPlantillaATelefono } from '@/lib/whatsapp/enviar-motor'
 import { NextResponse } from 'next/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { sendTemplateMessage } from '@/lib/whatsapp/meta-api'
@@ -124,9 +127,14 @@ export async function POST(request: Request) {
       )
     }
 
-    const { data: config, error: configError } = await leerFilaWhatsAppConfig(accountId)
+    // ECOVIT: fuera de Meta (Zernio, simulado) las llaves viven en el entorno y
+    // el envío va por la interfaz del proveedor (RF-M03.8).
+    const esMeta = nombreProveedor() === 'meta'
+    const { data: config, error: configError } = esMeta
+      ? await leerFilaWhatsAppConfig(accountId)
+      : { data: null, error: null }
 
-    if (configError || !config) {
+    if (esMeta && (configError || !config)) {
       return NextResponse.json(
         {
           error:
@@ -136,7 +144,7 @@ export async function POST(request: Request) {
       )
     }
 
-    const accessToken = decrypt(config.access_token)
+    const accessToken = config?.access_token ? decrypt(config.access_token) : ''
 
     // Load the template row once so sendTemplateMessage can build
     // header + button components on each iteration. Loading inside
@@ -183,10 +191,22 @@ export async function POST(request: Request) {
       let sentMessageId: string | null = null
       let lastError: string | null = null
 
-      for (const variant of variants) {
+      if (!esMeta) {
+        const r = await enviarPlantillaATelefono({
+          telefono: sanitized,
+          nombre: template_name,
+          idioma: resolvedTemplate.language,
+          parametros: recipient.params ?? [],
+          idempotencia: randomUUID(),
+        })
+        if (r.ok) sentMessageId = r.wamid
+        else lastError = r.error
+      }
+
+      for (const variant of esMeta ? variants : []) {
         try {
           const result = await sendTemplateMessage({
-            phoneNumberId: config.phone_number_id,
+            phoneNumberId: config!.phone_number_id,
             accessToken,
             to: variant,
             templateName: template_name,

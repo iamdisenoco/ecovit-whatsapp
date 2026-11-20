@@ -1,3 +1,4 @@
+import { nombreProveedor } from '@/lib/whatsapp/proveedor/nombre';
 import { NextResponse } from 'next/server';
 import { requireRole, toErrorResponse } from '@/lib/auth/account';
 import { sendReactionMessage } from '@/lib/whatsapp/meta-api';
@@ -95,6 +96,15 @@ export async function POST(request: Request) {
     if (!sendTarget) {
       return NextResponse.json(
         { error: t('react.contactNoPhone') },
+        { status: 400 },
+      );
+    }
+
+    // ECOVIT: la interfaz del proveedor (RF-M03.8) no tiene reacciones y Zernio
+    // no las tiene verificadas. Fuera de Meta se dice, sin guardar nada.
+    if (nombreProveedor() !== 'meta') {
+      return NextResponse.json(
+        { error: 'Las reacciones todavía no se envían por este proveedor.' },
         { status: 400 },
       );
     }
