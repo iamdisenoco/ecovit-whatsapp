@@ -74,14 +74,23 @@ export const VENCE_ADJUNTO_SALIENTE_S = 10 * 60;
 /**
  * Un adjunto nuestro (`/api/whatsapp/adjunto/<ruta>` en el bucket privado
  * chat-media) se le pasa al proveedor como enlace firmado de vencimiento corto:
- * Zernio y Meta lo bajan por URL al enviar. Otra URL pasa tal cual.
+ * Zernio y Meta lo bajan por URL al enviar.
+ *
+ * ECOVIT · bloque 5 (revisión): desde la bandeja SOLO se manda lo que se subió
+ * aquí. Una URL externa terminaba en `messages.media_url` escrita con la clave
+ * de servicio (la 0115 le quitó esa columna a la sesión justo para eso), y la
+ * bandeja la mostraba como adjunto del chat.
  */
 export async function urlParaProveedor(
   url: string,
   accountId: string
 ): Promise<string> {
   const ruta = rutaDesdeUrlInterna(url);
-  if (!ruta) return url;
+  if (!ruta) {
+    throw new Error(
+      'Solo se pueden enviar adjuntos subidos desde la bandeja, no enlaces externos.'
+    );
+  }
   // Solo lo que se subió para MANDAR desde esta cuenta. Firmar cualquier ruta
   // dejaría a un vendedor reenviar adjuntos de chats que no ve.
   if (!ruta.startsWith(`account-${accountId}/outbound/`)) {

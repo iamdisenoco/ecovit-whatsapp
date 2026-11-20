@@ -369,6 +369,16 @@ export async function sendMessageToConversation(
   // adjunto lo escribe la clave de servicio justo después.
   // El enlace que baja el proveedor se resuelve ANTES de guardar nada: si el
   // adjunto no se puede mandar desde aquí, no queda una fila a medias.
+  // Lo que este proveedor no manda (botones y listas fuera de Meta) se rechaza
+  // ANTES de guardar la fila: si no, quedaba huérfana en `sending`.
+  if (proveedor !== 'meta' && messageType === 'interactive') {
+    // TODO(zernio): botones y listas, sin verificar con Zernio (plan-wacrm).
+    throw new SendMessageError(
+      'no_soportado',
+      'Los botones y las listas todavía no se envían por este proveedor.',
+      400
+    );
+  }
   let urlEnvio: string | null = null;
   if (isMediaKind) {
     try {
@@ -436,14 +446,6 @@ export async function sendMessageToConversation(
   let pendiente = false;
 
   if (proveedor !== 'meta') {
-    if (messageType === 'interactive') {
-      // TODO(zernio): botones y listas, sin verificar con Zernio (plan-wacrm).
-      throw new SendMessageError(
-        'no_soportado',
-        'Los botones y las listas todavía no se envían por este proveedor.',
-        400
-      );
-    }
     const pedido: PedidoEnvio =
       messageType === 'template'
         ? {

@@ -212,4 +212,30 @@ describe('envío por el proveedor', () => {
     ).rejects.toThrow(/no se puede enviar/);
     expect(h.orden).toEqual([]);
   });
+
+  it('no deja pasar una URL externa: no se guarda nada ni se envía', async () => {
+    await expect(
+      sendMessageToConversation(sesion(), 'acc-1', {
+        conversationId: 'cv-1',
+        messageType: 'image',
+        mediaUrl: 'https://otro-sitio.example/foto.png',
+      })
+    ).rejects.toThrow(/enlaces externos/);
+    expect(h.orden).toEqual([]);
+  });
+
+  it('botones y listas fuera de Meta fallan ANTES de guardar la fila (no queda huérfana en sending)', async () => {
+    await expect(
+      sendMessageToConversation(sesion(), 'acc-1', {
+        conversationId: 'cv-1',
+        messageType: 'interactive',
+        interactivePayload: {
+          kind: 'buttons',
+          body: 'Elija',
+          buttons: [{ id: 'a', title: 'A' }],
+        },
+      })
+    ).rejects.toThrow(/botones y las listas/);
+    expect(h.orden).toEqual([]);
+  });
 });
