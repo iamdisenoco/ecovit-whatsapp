@@ -11,7 +11,11 @@
 
 import { MODELO_BOT } from './costo';
 
-const URL_MENSAJES = 'https://api.anthropic.com/v1/messages';
+/** `ANTHROPIC_BASE_URL` si existe (un proxy o el arnés de validación). */
+export function urlMensajes(env: Record<string, string | undefined> = process.env): string {
+  const base = (env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com').replace(/\/+$/, '');
+  return `${base}/v1/messages`;
+}
 const VERSION_API = '2023-06-01';
 const MAX_TOKENS = 2048;
 
@@ -60,7 +64,7 @@ export async function llamarClaude(args: {
   const f = args.fetchImpl ?? fetch;
   let res: Response;
   try {
-    res = await f(URL_MENSAJES, {
+    res = await f(urlMensajes(), {
       method: 'POST',
       headers: {
         'x-api-key': args.apiKey,
