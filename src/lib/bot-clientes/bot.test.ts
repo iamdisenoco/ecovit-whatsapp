@@ -229,3 +229,34 @@ describe('piezas', () => {
     ).toEqual([{ role: 'user', content: 'a\n\nb' }]);
   });
 });
+
+describe('revisor: ninguna cifra de plata en el texto del modelo', () => {
+  const frena = [
+    'Vale 148000 la unidad',
+    'Son unos 148 mil',
+    'Cuesta 1.5 millones',
+    'Cuesta 1,5 millón',
+    'Sale en 150k',
+    'Queda en 148.000',
+    'Queda en 148 000',
+    'Unas 150 lucas',
+    'Son 2 palos',
+    'COP 500',
+    'Precio: $90',
+    'Son 12 dólares',
+    'Más o menos 2 mill',
+  ];
+  const deja = [
+    'Tenemos 3 disponibles.',
+    'Para 200 unidades te paso con tu asesor.',
+    'La referencia FX-1234 está disponible.',
+    'El fluxómetro de 1/2 pulgada viene en caja de 12.',
+    'Viene con 3 m de manguera y tubo de 25 mm.',
+  ];
+  for (const t of frena) {
+    it(`frena: «${t}»`, () => expect(revisarRespuesta(t, new Map()).ok).toBe(false));
+  }
+  for (const t of deja) {
+    it(`deja: «${t}»`, () => expect(revisarRespuesta(t, new Map()).ok).toBe(true));
+  }
+});
