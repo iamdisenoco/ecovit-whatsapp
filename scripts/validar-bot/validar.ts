@@ -22,7 +22,9 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   return fetchReal(u, init);
 }) as typeof fetch;
 
-let gastoTotal = 0;
+// Lo ya gastado en tandas anteriores cuenta para el tope.
+let gastoTotal = Number(process.env.GASTO_PREVIO ?? 0);
+const gastoInicial = gastoTotal;
 
 // ── Catálogo doblado ─────────────────────────────────────────────────────────
 type Ref = { codigo: string; descripcion: string; unidad: string; stock: number | null; precio_base: number | null };
@@ -187,6 +189,8 @@ const T5 = t5NoNegocia();
 const ultimo = (s: Salida) => s.resultados[s.resultados.length - 1];
 const enviadoFinal = (s: Salida) => s.reg.enviados[s.reg.enviados.length - 1] ?? '';
 const pasoCon = (s: Salida, motivos: string[]) => !!s.reg.paso && motivos.includes(String(s.reg.paso.motivo));
+/** La nota al vendedor que acusa al bot de haber dado un precio por su cuenta. */
+const NOTA_MALA = /sin consultar|sin usar la marca|marca de precio|se dio un precio|precio sin|error del (bot|asistente)/i;
 const codigosFalsos = (t: string) => (t.match(/\b[A-Z]{2,3}-?\d{2,5}\b/g) ?? []).filter((c) => !CATALOGO.some((r) => r.codigo === c));
 
 /** 🔴: plata al cliente sin T9. Quita los T9 correctos y busca cifras/monedas que queden. */
@@ -227,8 +231,8 @@ const CASOS: Caso[] = [
     turnos: [['precio del fluxometro FX-1020?'], ['y si llevo 200?']],
     juzgar: (s) => {
       const t = enviadoFinal(s);
-      const ok = s.resultados[0].accion === 'respondio' && s.reg.enviados[0]?.includes(T9(148000)) && ultimo(s).accion === 'paso' && pasoCon(s, ['volumen']) && t.startsWith(T5);
-      return { ok: !!ok, nota: ok ? '' : `r1=${s.resultados[0].accion} motivo=${s.reg.paso?.motivo}` };
+      const ok = s.resultados[0].accion === 'respondio' && s.reg.enviados[0]?.includes(T9(148000)) && ultimo(s).accion === 'paso' && pasoCon(s, ['volumen']) && t.startsWith(T5) && !NOTA_MALA.test(String(s.reg.paso?.resumen));
+      return { ok: !!ok, nota: ok ? '' : `r1=${s.resultados[0].accion} motivo=${s.reg.paso?.motivo} resumen=${s.reg.paso?.resumen}` };
     },
   },
   {
@@ -272,12 +276,12 @@ const CASOS: Caso[] = [
   },
   {
     id: '8', nombre: 'Mensajes en pedazos',
-    expectativa: 'Las dos primeras vueltas se descartan (llegó otro); la tercera contesta con todo: existencia de la ducha (a confirmar) y el precio T9 de DU-0480. Un solo mensaje al cliente.',
+    expectativa: 'Las dos primeras vueltas se descartan SIN llamar a Claude (llegó otro); la tercera contesta con todo: existencia de la ducha (a confirmar) y el precio T9 de DU-0480. Un solo mensaje al cliente, 2 llamadas en total.',
     esc: { telefono: JON, carteraDe: null },
     turnos: [['hola', 'una pregunta', 'la ducha temporizada tienen?? y a como']],
     juzgar: (s) => {
-      const ok = s.reg.enviados.length === 1 && ultimo(s).accion === 'respondio' && enviadoFinal(s).includes(T9(96000));
-      return { ok, nota: ok ? '' : `enviados=${s.reg.enviados.length} acciones=${s.resultados.map((r) => r.accion).join(',')}` };
+      const ok = s.reg.enviados.length === 1 && ultimo(s).accion === 'respondio' && enviadoFinal(s).includes(T9(96000)) && s.reg.llamadasClaude <= 3 && s.resultados.slice(0, 2).every((r) => r.accion === 'descartado');
+      return { ok, nota: ok ? '' : `enviados=${s.reg.enviados.length} llamadas=${s.reg.llamadasClaude} acciones=${s.resultados.map((r) => r.accion).join(',')}` };
     },
   },
   {
@@ -393,8 +397,59 @@ const CASOS: Caso[] = [
     turnos: [['y el acople flexible de 40 cm q vale']],
     juzgar: (s) => ({ ok: ultimo(s).accion === 'paso' && s.reg.paso?.motivo === 'sin_dato', nota: `motivo=${s.reg.paso?.motivo}` }),
   },
+  // ── Tanda 3 (20-nov): casos nuevos del coordinador ──
+  {
+    id: '17', nombre: '«¿me lo dejas en 120?»',
+    expectativa: 'Después del T9 de FX-1020, el cliente ofrece 120. El bot no acepta ni repite 120: pasa (descuento) con T5 + T3.',
+    esc: { telefono: JON, carteraDe: null },
+    turnos: [['cuanto vale el FX-1020'], ['uy caro, me lo dejas en 120?']],
+    juzgar: (s) => {
+      const t = s.reg.enviados.slice(1).join('\n');
+      const ok = ultimo(s).accion === 'paso' && !/120/.test(t) && enviadoFinal(s).startsWith(T5);
+      return { ok, nota: ok ? '' : `accion=${ultimo(s).accion} motivo=${s.reg.paso?.motivo}` };
+    },
+  },
+  {
+    id: '18', nombre: '3 cajas de la FLX-1020, ¿cuánto sería todo?',
+    expectativa: 'Código mal escrito (es FX-1020). No calcula total: el revisor frena o pasa el chat. Si da T9, que sea por UND y sin total.',
+    esc: { telefono: JON, carteraDe: null },
+    turnos: [['necesito 3 cajas de la FLX-1020, cuanto seria todo?']],
+    juzgar: (s) => {
+      const t = enviadoFinal(s);
+      const ok = ultimo(s).accion === 'paso' || (ultimo(s).accion === 'respondio' && !/total|todo/i.test(t.replace(T9(148000), '')));
+      return { ok, nota: ok ? '' : `accion=${ultimo(s).accion}` };
+    },
+  },
+  {
+    id: '19', nombre: 'Existencias de dos referencias',
+    expectativa: 'Contesta las dos: FX-1030 con 12 y GL-2215 con 7. No pasa el chat.',
+    esc: { telefono: JON, carteraDe: null },
+    turnos: [['buenas, cuantos fluxometros de orinal FX-1030 y cuantas griferias temporizadas GL-2215 tienen en bodega?']],
+    juzgar: (s) => {
+      const t = enviadoFinal(s);
+      const ok = ultimo(s).accion === 'respondio' && /\b12\b/.test(t) && /\b7\b/.test(t);
+      return { ok, nota: ok ? '' : `accion=${JSON.stringify(ultimo(s)).slice(0, 200)}` };
+    },
+  },
+  {
+    id: '20', nombre: 'Conversación de 6 turnos con precio en el medio',
+    expectativa: 'Turnos 1-5 contestados (turno 3 con T9 de FX-1020); turno 6 pasa como pedido. La nota al vendedor no acusa al bot de haber dado un precio por su cuenta.',
+    esc: { telefono: CON_CARTERA, carteraDe: 'p-carlos' },
+    turnos: [
+      ['buenas tardes'],
+      ['q fluxometros manejan?'],
+      ['y el de sanitario a como esta'],
+      ['vale y del de orinal cuantos hay'],
+      ['ok y duchas temporizadas tienen?'],
+      ['listo quiero hacer el pedido: 10 del FX-1020 y 4 duchas, me ayuda?'],
+    ],
+    juzgar: (s) => {
+      const conT9 = s.reg.enviados.some((t) => t.includes(T9(148000)));
+      const ok = s.resultados.length === 6 && ultimo(s).accion === 'paso' && conT9 && !NOTA_MALA.test(String(s.reg.paso?.resumen));
+      return { ok, nota: ok ? '' : `vueltas=${s.resultados.length} t9=${conT9} acciones=${s.resultados.map((r) => r.accion).join(',')} resumen=${s.reg.paso?.resumen}` };
+    },
+  },
 ];
-
 async function correrCaso(c: Caso): Promise<Salida> {
   const reg: Registro = { rpcs: [], enviados: [], llamadasClaude: 0, usos: [], costo: 0, paso: null, busquedas: [], crudos: [] };
   const estado = { replyCount: 0 };
@@ -464,7 +519,7 @@ async function main() {
       console.log(`${c.id}#${k} ${ok ? 'OK' : 'NO'} ${j.nota} ${rojos.length ? 'ROJO' : ''} USD ${s.reg.costo.toFixed(5)} · acumulado ${gastoTotal.toFixed(4)}`);
     }
   }
-  appendFileSync(`${OUT}.md`, `\n## Tabla\n${Object.entries(tabla).map(([k, v]) => `${k}: ${v.join(' ')}`).join('\n')}\n\nGasto de esta corrida: USD ${gastoTotal.toFixed(5)}\n`);
-  console.log('TABLA', JSON.stringify(tabla), 'GASTO', gastoTotal.toFixed(5));
+  appendFileSync(`${OUT}.md`, `\n## Tabla\n${Object.entries(tabla).map(([k, v]) => `${k}: ${v.join(' ')}`).join('\n')}\n\nGasto de esta tanda: USD ${(gastoTotal - gastoInicial).toFixed(5)} · acumulado USD ${gastoTotal.toFixed(5)}\n`);
+  console.log('TABLA', JSON.stringify(tabla), 'GASTO_TANDA', (gastoTotal - gastoInicial).toFixed(5), 'ACUMULADO', gastoTotal.toFixed(5));
 }
 main();
