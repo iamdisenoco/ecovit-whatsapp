@@ -25,13 +25,17 @@ const pageTitles: Record<string, string> = {
   "/contacts": "contacts",
   "/broadcasts": "broadcasts",
   "/automations": "automations",
+  "/flows": "flows",
+  "/agents": "agents",
   "/settings": "settings",
 };
 
-function getPageTitleKey(pathname: string): string {
+/** El título de la cabecera según la ruta. Por SEGMENTO, no por prefijo de
+ *  texto (regla de ECOVIT): `/agents` no es `/a…` de nada más. */
+export function getPageTitleKey(pathname: string): string {
   if (pageTitles[pathname]) return pageTitles[pathname];
   const match = Object.entries(pageTitles).find(([path]) =>
-    pathname.startsWith(path),
+    pathname.startsWith(`${path}/`),
   );
   return match ? match[1] : "dashboard";
 }
