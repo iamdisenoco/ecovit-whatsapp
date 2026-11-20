@@ -18,7 +18,10 @@ const t = getT('Api')
 const MAX_TURNS = 20
 
 /**
- * POST /api/ai/playground  (agent+)
+ * POST /api/ai/playground  (admin+)
+ *
+ * ECOVIT: solo la dirección. Probar gasta con la llave de la empresa y cuenta
+ * para el tope mensual; no es de cada vendedor.
  *
  * Test-chat with the account's agent WITHOUT touching WhatsApp. Runs the
  * exact same path the auto-reply bot uses — knowledge-base retrieval +
@@ -29,7 +32,7 @@ const MAX_TURNS = 20
  */
 export async function POST(request: Request) {
   try {
-    const { supabase, accountId, userId } = await requireRole('agent')
+    const { supabase, accountId, userId } = await requireRole('admin')
 
     const limit = checkRateLimit(`ai-playground:${userId}`, RATE_LIMITS.aiDraft)
     if (!limit.success) return rateLimitResponse(limit)

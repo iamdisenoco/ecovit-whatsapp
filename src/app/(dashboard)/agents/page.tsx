@@ -26,7 +26,8 @@ export default function AgentsPage() {
       try {
         const res = await fetch('/api/ai/config');
         const data = await res.json().catch(() => ({}));
-        if (!cancelled) setTab(data?.configured ? 'playground' : 'setup');
+        // ECOVIT: el playground es solo de la dirección (gasta y cuenta para el tope).
+        if (!cancelled) setTab(data?.configured && canViewUsage ? 'playground' : 'setup');
       } catch {
         if (!cancelled) setTab('setup');
       } finally {
@@ -36,7 +37,7 @@ export default function AgentsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [canViewUsage]);
 
   return (
     <div>
@@ -57,9 +58,11 @@ export default function AgentsPage() {
           className="mt-6"
         >
           <TabsList>
-            <TabsTrigger value="playground">
-              <Sparkles className="mr-1.5 h-4 w-4" /> {t('tabPlayground')}
-            </TabsTrigger>
+            {canViewUsage && (
+              <TabsTrigger value="playground">
+                <Sparkles className="mr-1.5 h-4 w-4" /> {t('tabPlayground')}
+              </TabsTrigger>
+            )}
             <TabsTrigger value="setup">
               <Settings2 className="mr-1.5 h-4 w-4" /> {t('tabSetup')}
             </TabsTrigger>
@@ -70,9 +73,11 @@ export default function AgentsPage() {
             )}
           </TabsList>
 
-          <TabsContent value="playground" className="mt-4">
-            <AiPlayground onGoToSetup={() => setTab('setup')} />
-          </TabsContent>
+          {canViewUsage && (
+            <TabsContent value="playground" className="mt-4">
+              <AiPlayground onGoToSetup={() => setTab('setup')} />
+            </TabsContent>
+          )}
 
           <TabsContent value="setup" className="mt-4">
             <AiConfig />
