@@ -8,6 +8,7 @@ import { generateReply } from '@/lib/ai/generate'
 import { buildSystemPrompt } from '@/lib/ai/defaults'
 import { latestUserMessage } from '@/lib/ai/query'
 import { logAiUsage } from '@/lib/ai/usage'
+import { revisarTopeMensual } from '@/lib/ai/tope'
 import { supabaseAdmin } from '@/lib/ai/admin-client'
 import { AiError } from '@/lib/ai/types'
 import { getT } from '@/lib/i18n/translate'
@@ -106,6 +107,23 @@ export async function POST(request: Request) {
       mode: 'draft',
       knowledge,
     })
+
+    // ECOVIT · RF-M03.11: el tope mensual vale también aquí, ANTES de gastar.
+
+    const tope = await revisarTopeMensual(supabaseAdmin(), accountId)
+
+    if (!tope.ok) {
+
+      return NextResponse.json(
+
+        { error: tope.mensaje, code: tope.motivo },
+
+        { status: tope.motivo === 'error' ? 503 : 429 },
+
+      )
+
+    }
+
 
     const { text, usage } = await generateReply({ config, systemPrompt, messages })
 

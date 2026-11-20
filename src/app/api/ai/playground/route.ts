@@ -5,6 +5,7 @@ import { loadAiConfig } from '@/lib/ai/config'
 import { retrieveKnowledge } from '@/lib/ai/knowledge'
 import { generateReply } from '@/lib/ai/generate'
 import { logAiUsage } from '@/lib/ai/usage'
+import { revisarTopeMensual } from '@/lib/ai/tope'
 import { supabaseAdmin } from '@/lib/ai/admin-client'
 import { buildSystemPrompt } from '@/lib/ai/defaults'
 import { latestUserMessage } from '@/lib/ai/query'
@@ -88,6 +89,23 @@ export async function POST(request: Request) {
       mode: 'auto_reply',
       knowledge,
     })
+
+    // ECOVIT · RF-M03.11: el tope mensual vale también aquí, ANTES de gastar.
+
+    const tope = await revisarTopeMensual(supabaseAdmin(), accountId)
+
+    if (!tope.ok) {
+
+      return NextResponse.json(
+
+        { error: tope.mensaje, code: tope.motivo },
+
+        { status: tope.motivo === 'error' ? 503 : 429 },
+
+      )
+
+    }
+
 
     const { text, handoff, usage } = await generateReply({ config, systemPrompt, messages })
     // ECOVIT · RF-M03.11: probar también gasta, y cuenta para el tope mensual.
