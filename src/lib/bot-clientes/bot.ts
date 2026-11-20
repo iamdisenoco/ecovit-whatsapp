@@ -100,8 +100,27 @@ async function registrarUso(
 }
 
 /** Lo que Claude acepta: turnos alternados que empiezan por el cliente. */
+/**
+ * El T9 que mandó el sistema NO lo escribió el modelo: si le llega como suyo,
+ * después cree que dio un precio sin consultar. Se le muestra como lo que es,
+ * un texto automático, y sin la cifra.
+ */
+const T9_ENVIADO = new RegExp(
+  TEXTOS.T9.plantilla
+    .replace(/[.*+?^$()|[\]\\]/g, '\\$&')
+    .replace('{precio}', '[^\\n]+?')
+    .replace('{unidad}', '[^\\n]+?'),
+  'g'
+);
+export const MARCA_T9_HISTORIAL =
+  '[Mensaje automático del sistema: se le envió al cliente el precio de lista de la referencia, con su aclaración T9.]';
+
 export function mensajesParaClaude(contexto: ChatMessage[]): MensajeClaude[] {
-  const unidos = mergeConsecutive(contexto);
+  const unidos = mergeConsecutive(
+    contexto.map((m) =>
+      m.role === 'assistant' ? { ...m, content: m.content.replace(T9_ENVIADO, MARCA_T9_HISTORIAL) } : m
+    )
+  );
   while (unidos.length > 0 && unidos[0].role === 'assistant') unidos.shift();
   return unidos.map((m) => ({ role: m.role, content: m.content }));
 }
@@ -250,6 +269,11 @@ export async function atenderConBot(deps: DependenciasBot, conversationId: strin
     let permitidos = '';
     let texto: string | null = null;
     for (let vuelta = 0; vuelta < MAX_VUELTAS && texto === null; vuelta++) {
+      // Mensajes en pedazos: si el cliente ya mandó otro, esta vuelta se va a
+      // descartar; se corta ANTES de gastar.
+      if (deps.hayEntranteMasNuevo && (await deps.hayEntranteMasNuevo())) {
+        return { accion: 'descartado', motivo: 'entrante_mas_nuevo' };
+      }
       let resp: RespuestaClaude;
       try {
         resp = await deps.llamar({
@@ -324,7 +348,8 @@ export async function atenderConBot(deps: DependenciasBot, conversationId: strin
       return pasarAVendedor(deps, conversationId, 'enredo', resumenDe(contexto, 'El bot no llegó a una respuesta.'), true);
     }
 
-    const revision = revisarRespuesta(texto, consultadas, permitidos);
+    const delCliente = contexto.filter((m) => m.role === 'user').map((m) => m.content).join('\n');
+    const revision = revisarRespuesta(texto, consultadas, permitidos, delCliente);
     if (!revision.ok) {
       console.warn('[bot-clientes] respuesta bloqueada por el revisor:', revision.motivo);
       return pasarAVendedor(deps, conversationId, 'sin_dato', resumenDe(contexto, `Respuesta del bot bloqueada: ${revision.motivo}.`), true);

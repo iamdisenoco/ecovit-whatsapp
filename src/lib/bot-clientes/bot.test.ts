@@ -1,8 +1,8 @@
 // El bot de clientes (bloque 6) con dobles: NUNCA llama a Claude ni a Zernio.
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { atenderConBot, mensajesParaClaude, paraElModelo, type DependenciasBot } from './bot';
-import { ErrorClaude, llamarClaude, type RespuestaClaude } from './claude';
+import { atenderConBot, MARCA_T9_HISTORIAL, mensajesParaClaude, paraElModelo, type DependenciasBot } from './bot';
+import { ErrorClaude, llamarClaude, urlMensajes, type RespuestaClaude } from './claude';
 import { costoUsd, leerUso } from './costo';
 import { revisarRespuesta, valorEnPalabras } from './revisor';
 import { t3PasoConAsesor, t9PrecioLista, TEXTOS } from './textos';
@@ -411,5 +411,54 @@ describe('revisor: frase de precio + número frena siempre (cuarta revisión)', 
 
   it('sin número detrás, la palabra de precio no frena', () => {
     expect(revisarRespuesta('El precio de lista te lo da tu asesor.', new Map(), PERMITIDOS).ok).toBe(true);
+  });
+});
+
+describe('validación con Claude real: arreglos', () => {
+  // El catálogo dice 34 del FX-1020.
+  const VISTO = paraElModelo([
+    { codigo: 'FX-1020', descripcion: 'Fluxómetro sanitario', unidad: 'UND', precio_base: 148000, disponibilidad: 34 },
+  ] as never);
+
+  it('«¿tienen 20?» → «los 20 te alcanzan» pasa (número del cliente usado como cantidad)', () => {
+    const r = revisarRespuesta('Tenemos 34 unidades, así que los 20 te alcanzan.', new Map(), VISTO, '¿Tienen 20?');
+    expect(r.ok).toBe(true);
+    expect(revisarRespuesta('Sí, 20 unidades sí hay.', new Map(), VISTO, '¿Tienen 20?').ok).toBe(true);
+  });
+
+  it('«¿me lo dejas en 120?» → «sí, en 120» frena (número del cliente como precio)', () => {
+    expect(revisarRespuesta('Sí, en 120', new Map(), VISTO, '¿Me lo dejas en 120?').ok).toBe(false);
+    expect(revisarRespuesta('Te lo dejo en 120 cada uno', new Map(), VISTO, '¿Y 120 unidades?').ok).toBe(false);
+  });
+
+  it('un total que calculó el modelo (no lo dijo nadie) frena', () => {
+    // 20 + 14 = 54 no está ni en el catálogo ni en lo del cliente.
+    expect(revisarRespuesta('Con los 20 y los 14 son 54 unidades.', new Map(), VISTO, 'Quiero 20 y 14').ok).toBe(false);
+  });
+
+  it('el T9 del historial le llega al modelo como mensaje del sistema, sin cifra', () => {
+    const t9 = t9PrecioLista(148000, 'UND');
+    const m = mensajesParaClaude([
+      { role: 'user', content: 'precio FX-1020' },
+      { role: 'assistant', content: `Este es:\n${t9}` },
+      { role: 'user', content: 'gracias' },
+    ]);
+    expect(m[1].content).toBe(`Este es:\n${MARCA_T9_HISTORIAL}`);
+    expect(JSON.stringify(m)).not.toContain('148');
+  });
+
+  it('si ya llegó otro mensaje del cliente, corta ANTES de llamar a Claude', async () => {
+    const d = deps();
+    d.hayEntranteMasNuevo = async () => true;
+    respuestasClaude = [texto('Hola')];
+    const r = await atenderConBot(d, 'c1');
+    expect(r).toEqual({ accion: 'descartado', motivo: 'entrante_mas_nuevo' });
+    expect(llamadas).toBe(0);
+    expect(fns()).not.toContain('registrar_uso_ia_wa');
+  });
+
+  it('la URL de la API respeta ANTHROPIC_BASE_URL', () => {
+    expect(urlMensajes({})).toBe('https://api.anthropic.com/v1/messages');
+    expect(urlMensajes({ ANTHROPIC_BASE_URL: 'http://proxy.local:8080/' })).toBe('http://proxy.local:8080/v1/messages');
   });
 });
