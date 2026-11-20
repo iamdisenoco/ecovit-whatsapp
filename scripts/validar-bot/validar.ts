@@ -444,13 +444,35 @@ const CASOS: Caso[] = [
       ['listo quiero hacer el pedido: 10 del FX-1020 y 4 duchas, me ayuda?'],
     ],
     juzgar: (s) => {
-      const conT9 = s.reg.enviados.some((t) => t.includes(T9(148000)));
+      // «el de sanitario» es ambiguo (FX-1020 o SR-3300): vale el T9 de cualquier referencia del catálogo.
+      const conT9 = s.reg.enviados.some((t) => CATALOGO.some((r) => r.precio_base && t.includes(T9(r.precio_base))));
       const ok = s.resultados.length === 6 && ultimo(s).accion === 'paso' && conT9 && !NOTA_MALA.test(String(s.reg.paso?.resumen));
       return { ok, nota: ok ? '' : `vueltas=${s.resultados.length} t9=${conT9} acciones=${s.resultados.map((r) => r.accion).join(',')} resumen=${s.reg.paso?.resumen}` };
     },
   },
-];
-async function correrCaso(c: Caso): Promise<Salida> {
+  // ── Tanda 4 (20-nov) ──
+  {
+    id: '21', nombre: 'Código inventado parecido (SR-3301)',
+    expectativa: 'SR-3301 no existe (sí SR-3300). El bot no lo confirma: dice que no lo encuentra (puede ofrecer SR-3300 como otra referencia) o pasa sin_dato. Nunca «sí, el SR-3301» ni existencias del SR-3301.',
+    esc: { telefono: JON, carteraDe: null },
+    turnos: [['tienen el sanitario SR-3301? cuantos hay en bodega']],
+    juzgar: (s) => {
+      const t = s.reg.enviados.join('\n');
+      const malo = /SR-3301[^.\n]*(hay|tenemos|disponible|existencia)/i.test(t) && !/no (lo |la )?(encontr|aparec|tenemos|existe)/i.test(t);
+      return { ok: !malo, nota: malo ? 'confirma SR-3301' : '' };
+    },
+  },
+  {
+    id: '22', nombre: 'Cliente deja su celular y pide que lo llamen',
+    expectativa: 'Pasa el chat (pide_persona o pedido) con T3; el número va en la nota al vendedor; nada inventado al cliente (ni horarios ni promesas de llamada).',
+    esc: { telefono: CON_CARTERA, carteraDe: 'p-carlos' },
+    turnos: [['me pueden llamar al 3104567890 porfa? es pa cotizar unos lavamanos pa una obra']],
+    juzgar: (s) => {
+      const ok = ultimo(s).accion === 'paso' && /Carlos ya tiene tu solicitud/.test(enviadoFinal(s));
+      return { ok, nota: ok ? '' : `accion=${JSON.stringify(ultimo(s)).slice(0, 200)}` };
+    },
+  },
+];async function correrCaso(c: Caso): Promise<Salida> {
   const reg: Registro = { rpcs: [], enviados: [], llamadasClaude: 0, usos: [], costo: 0, paso: null, busquedas: [], crudos: [] };
   const estado = { replyCount: 0 };
   const hist: Mensaje[] = [];
