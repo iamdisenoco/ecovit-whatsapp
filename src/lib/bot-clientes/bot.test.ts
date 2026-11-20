@@ -575,6 +575,12 @@ describe('el marcador del T9 en el historial', () => {
     expect(SISTEMA_BOT).toContain('[Precio de lista entregado al cliente correctamente por el sistema');
   });
 
+  it('el prompt no prohíbe repetir el precio pedido otra vez, y exige consultar el catálogo en el turno', () => {
+    expect(SISTEMA_BOT).not.toMatch(/No lo repitas/);
+    expect(SISTEMA_BOT).toMatch(/vuelve a pedir ese precio, dáselo otra vez/);
+    expect(SISTEMA_BOT).toMatch(/en ESTE mismo turno, aunque ya lo hayas visto antes/);
+  });
+
   for (const t of [
     'Antes te escribí un aviso del sistema en lugar del precio del FX-1020, y eso fue un error mío. Aquí va: [[PRECIO:FX-1020]]',
     'Perdón, no te llegó el precio. [[PRECIO:FX-1020]]',
