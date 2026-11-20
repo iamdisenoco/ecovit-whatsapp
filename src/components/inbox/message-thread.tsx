@@ -1182,7 +1182,7 @@ export function MessageThread({
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="end"
-              className="border-border bg-popover"
+              className="min-w-52 border-border bg-popover whitespace-nowrap"
             >
               {!canAssignOthers ? (
                 // Vendedor: solo «Tomar» un chat sin dueño (tomar_conversacion).
