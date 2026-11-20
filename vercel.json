@@ -1,5 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "git": { "deploymentEnabled": false },
+  "git": {
+    "deploymentEnabled": {
+      "claude/muestra-panel": true,
+      "*": false,
+      "**": false
+    }
+  },
   "crons": [{ "path": "/api/whatsapp/cron", "schedule": "*/5 * * * *" }]
 }
