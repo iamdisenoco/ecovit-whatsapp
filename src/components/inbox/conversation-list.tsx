@@ -8,6 +8,7 @@ import {
   normalizeConversations,
 } from "@/lib/inbox/conversations";
 import { applyInboxFilter, type InboxFilter } from "@/lib/inbox/inbox-filters";
+import { chipAsignado } from "@/lib/inbox/asignado";
 import { cn } from "@/lib/utils";
 import type { Conversation, ConversationStatus, Tag } from "@/types";
 import { Search, ChevronDown, X } from "lucide-react";
@@ -144,6 +145,28 @@ export function ConversationList({
     (async () => {
       const { data } = await supabase.from("tags").select("*").order("name");
       if (!cancelled && data) setTags(data as Tag[]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // ECOVIT: los nombres del equipo, para el chip de quién tiene cada chat.
+  // Lo que adorna no tumba lo que sirve: si falla, el chip dice «Asignado».
+  const [nombres, setNombres] = useState<Map<string, string>>(() => new Map());
+  useEffect(() => {
+    const supabase = createClient();
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.from("profiles").select("user_id, full_name");
+      if (cancelled || !data) return;
+      setNombres(
+        new Map(
+          (data as { user_id: string; full_name: string | null }[])
+            .filter((p) => p.full_name)
+            .map((p) => [p.user_id, p.full_name as string]),
+        ),
+      );
     })();
     return () => {
       cancelled = true;
@@ -417,6 +440,7 @@ export function ConversationList({
                 conversation={conv}
                 isActive={conv.id === activeConversationId}
                 onSelect={handleSelect}
+                nombres={nombres}
                 t={t}
               />
             ))}
@@ -431,6 +455,7 @@ interface ConversationItemProps {
   conversation: Conversation;
   isActive: boolean;
   onSelect: (conversation: Conversation) => void;
+  nombres: ReadonlyMap<string, string>;
   t: ReturnType<typeof useTranslations>;
 }
 
@@ -438,8 +463,10 @@ function ConversationItem({
   conversation,
   isActive,
   onSelect,
+  nombres,
   t,
 }: ConversationItemProps) {
+  const chip = chipAsignado(conversation.assigned_agent_id, nombres);
   const dateLocale = getDateLocale(useLocale());
   const contact = conversation.contact;
   const displayName = contact?.name || contact?.phone || t("unknown");
@@ -490,6 +517,17 @@ function ConversationItem({
             {conversation.last_message_text || t("noMessagesYet")}
           </p>
           <div className="flex shrink-0 items-center gap-1.5">
+            <span
+              title={chip.asignado ? `Lo tiene ${chip.texto}` : "Nadie tiene este chat"}
+              className={cn(
+                "max-w-[6.5rem] truncate rounded-full border px-1.5 text-[10px] leading-4",
+                chip.asignado
+                  ? "border-primary/30 bg-primary/10 text-primary"
+                  : "border-border text-muted-foreground"
+              )}
+            >
+              {chip.texto}
+            </span>
             {conversation.unread_count > 0 && (
               <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
                 {conversation.unread_count}
