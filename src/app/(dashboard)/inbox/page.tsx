@@ -229,13 +229,11 @@ function InboxPageInner() {
         return;
       }
 
-      const { data } = await supabase
-        .from("whatsapp_config")
-        .select("status")
-        .eq("account_id", accountId)
-        .maybeSingle();
-
-      setWhatsappConnected(data?.status === "connected");
+      // ECOVIT · bloque 5: el estado lo da el proveedor (Zernio no deja fila en
+      // whatsapp_config, y un vendedor no la ve por RLS).
+      const r = await fetch("/api/whatsapp/conexion", { cache: "no-store" }).catch(() => null);
+      const data = r && r.ok ? await r.json().catch(() => null) : null;
+      setWhatsappConnected(data ? data.conectado === true : false);
     };
 
     checkConnection();

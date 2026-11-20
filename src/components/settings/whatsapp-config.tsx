@@ -151,7 +151,8 @@ export function WhatsAppConfig() {
       // remains accurate.
       const { data, error } = await supabase
         .from('whatsapp_config')
-        .select('*')
+        // ECOVIT · bloque 5: `select *` da 42501 (las llaves no se leen con sesión).
+        .select('id, user_id, phone_number_id, waba_id, status, connected_at, created_at, updated_at, registered_at, subscribed_apps_at, last_registration_error, account_id, mirror_inbound_media')
         .eq('account_id', acctId)
         .maybeSingle();
 
@@ -160,14 +161,16 @@ export function WhatsAppConfig() {
       }
 
       if (data) {
-        setConfig(data);
+        // Las llaves no vienen (no se leen con sesión): se marcan como guardadas,
+        // que es todo lo que la pantalla necesita saber de ellas.
+        setConfig({ ...data, access_token: MASKED_TOKEN, verify_token: MASKED_TOKEN } as WhatsAppConfigType);
         setPhoneNumberId(data.phone_number_id || '');
         setWabaId(data.waba_id || '');
         setAccessToken(MASKED_TOKEN);
         // Same treatment as the access token: the row carries the encrypted
         // value, which is enough to know one exists. Show a mask instead of
         // an empty box so nobody concludes the token was never saved.
-        setVerifyToken(data.verify_token ? MASKED_TOKEN : '');
+        setVerifyToken(MASKED_TOKEN);
         setVerifyEdited(false);
         setPin('');
         setTokenEdited(false);
