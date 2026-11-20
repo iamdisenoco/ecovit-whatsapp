@@ -778,7 +778,8 @@ export function MessageComposer({
             gateReason={tGate("reasons.sendMessages")}
             disabled={!text.trim() || sessionExpired || sending}
             onClick={handleSend}
-            className="order-1 h-9 w-9 shrink-0 bg-primary p-0 hover:bg-primary/90 disabled:opacity-40 sm:order-3"
+            // ECOVIT DIS-04: «Enviar» es la acción siguiente de la bandeja: azul señal.
+            className="order-1 h-9 w-9 shrink-0 bg-accion p-0 text-accion-foreground hover:bg-accion-hover disabled:opacity-40 sm:order-3"
           >
             <Send className="h-4 w-4" />
           </GatedButton>
@@ -919,7 +920,7 @@ function MediaDraftPreview({
           disabled={busy}
           onClick={onSend}
           className={cn(
-            "h-9 w-9 shrink-0 bg-primary p-0 hover:bg-primary/90 disabled:opacity-40",
+            "h-9 w-9 shrink-0 bg-accion p-0 text-accion-foreground hover:bg-accion-hover disabled:opacity-40",
             draft.kind === "audio" && "ml-auto",
           )}
         >

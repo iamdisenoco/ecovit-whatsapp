@@ -36,7 +36,6 @@ import {
   Trash2,
   Save,
   X,
-  DollarSign,
   LayoutTemplate,
 } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';

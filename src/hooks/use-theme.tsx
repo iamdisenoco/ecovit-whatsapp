@@ -11,35 +11,22 @@ import {
 
 import {
   DEFAULT_MODE,
-  DEFAULT_THEME,
   MODE_STORAGE_KEY,
-  STORAGE_KEY,
-  isMode,
-  isThemeId,
+  TEMA_DE_MODO,
+  modoDeTema,
   type Mode,
-  type ThemeId,
 } from "@/lib/themes";
 
 /**
- * ThemeProvider — wraps the whole app, owns the two theming axes:
- *   • `theme` — the accent color (`data-theme` on <html>)
- *   • `mode`  — light / dark (`data-mode` on <html>)
- * The two are independent, so any accent renders in either mode.
+ * ThemeProvider — el modo claro/oscuro de ECOVIT (`data-tema` en <html>).
  *
- * The boot script in `src/app/layout.tsx` has already applied both
- * `data-theme` and `data-mode` before React hydrates, so by the time
- * this Provider mounts the page is already painted correctly. We just
- * read what's there and keep it in sync going forward.
- *
- * Persistence is localStorage only (device-scoped). A future
- * follow-up could mirror to `profiles.preferences` for cross-device
- * sync, but a per-device choice is also defensible — your phone may
- * deserve a different theme than your laptop.
+ * El script de arranque de `src/app/layout.tsx` ya dejó puesto el atributo
+ * antes de pintar: lo guardado en `ecovit_tema` o, si no hay nada, lo que
+ * diga `prefers-color-scheme`. Acá se lee lo que hay y se mantiene al día.
+ * Mientras la persona no elija, el modo sigue al sistema también en vivo.
  */
 
 interface ThemeContextValue {
-  theme: ThemeId;
-  setTheme: (next: ThemeId) => void;
   mode: Mode;
   setMode: (next: Mode) => void;
   toggleMode: () => void;
@@ -47,61 +34,34 @@ interface ThemeContextValue {
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
-function readInitialTheme(): ThemeId {
-  if (typeof window === "undefined") return DEFAULT_THEME;
-  // Whatever the boot script applied is the truth. Fall back to
-  // localStorage / default if for some reason the attribute is missing
-  // (e.g. someone bypassed the boot script in a custom layout).
-  const fromAttr = document.documentElement.dataset.theme;
-  if (isThemeId(fromAttr)) return fromAttr;
+function leerGuardado(): Mode | null {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (isThemeId(stored)) return stored;
+    return modoDeTema(localStorage.getItem(MODE_STORAGE_KEY));
   } catch {
-    // localStorage can throw in private-browsing / sandboxed contexts.
+    // localStorage puede fallar en incógnito o en un iframe aislado.
+    return null;
   }
-  return DEFAULT_THEME;
 }
 
 function readInitialMode(): Mode {
   if (typeof window === "undefined") return DEFAULT_MODE;
-  const fromAttr = document.documentElement.dataset.mode;
-  if (isMode(fromAttr)) return fromAttr;
-  try {
-    const stored = localStorage.getItem(MODE_STORAGE_KEY);
-    if (isMode(stored)) return stored;
-  } catch {
-    // localStorage can throw in private-browsing / sandboxed contexts.
-  }
-  return DEFAULT_MODE;
+  return modoDeTema(document.documentElement.dataset.tema) ?? leerGuardado() ?? DEFAULT_MODE;
+}
+
+function aplicar(mode: Mode) {
+  document.documentElement.dataset.tema = TEMA_DE_MODO[mode];
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<ThemeId>(readInitialTheme);
   const [mode, setModeState] = useState<Mode>(readInitialMode);
-
-  const setTheme = useCallback((next: ThemeId) => {
-    setThemeState(next);
-    if (typeof document !== "undefined") {
-      document.documentElement.dataset.theme = next;
-    }
-    try {
-      localStorage.setItem(STORAGE_KEY, next);
-    } catch {
-      // Same private-browsing edge case as above; the in-memory state
-      // still updates so the current tab works for the session.
-    }
-  }, []);
 
   const setMode = useCallback((next: Mode) => {
     setModeState(next);
-    if (typeof document !== "undefined") {
-      document.documentElement.dataset.mode = next;
-    }
+    if (typeof document !== "undefined") aplicar(next);
     try {
-      localStorage.setItem(MODE_STORAGE_KEY, next);
+      localStorage.setItem(MODE_STORAGE_KEY, TEMA_DE_MODO[next]);
     } catch {
-      // Same private-browsing edge case as above.
+      // Incógnito: el modo vive solo en esta pestaña.
     }
   }, []);
 
@@ -109,30 +69,35 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     setMode(mode === "dark" ? "light" : "dark");
   }, [mode, setMode]);
 
-  // Sync from other tabs — change theme or mode in tab A, tab B
-  // catches up without a refresh.
+  // Sin elección guardada, el modo sigue al sistema en vivo.
+  useEffect(() => {
+    const consulta = window.matchMedia("(prefers-color-scheme: dark)");
+    function alCambiar(e: MediaQueryListEvent) {
+      if (leerGuardado()) return;
+      const next: Mode = e.matches ? "dark" : "light";
+      setModeState(next);
+      aplicar(next);
+    }
+    consulta.addEventListener("change", alCambiar);
+    return () => consulta.removeEventListener("change", alCambiar);
+  }, []);
+
+  // Otra pestaña cambió el modo: esta se pone al día.
   useEffect(() => {
     function onStorage(e: StorageEvent) {
-      if (e.key === STORAGE_KEY) {
-        if (isThemeId(e.newValue) && e.newValue !== theme) {
-          setThemeState(e.newValue);
-          document.documentElement.dataset.theme = e.newValue;
-        }
-        return;
-      }
-      if (e.key === MODE_STORAGE_KEY) {
-        if (isMode(e.newValue) && e.newValue !== mode) {
-          setModeState(e.newValue);
-          document.documentElement.dataset.mode = e.newValue;
-        }
+      if (e.key !== MODE_STORAGE_KEY) return;
+      const next = modoDeTema(e.newValue);
+      if (next && next !== mode) {
+        setModeState(next);
+        aplicar(next);
       }
     }
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
-  }, [theme, mode]);
+  }, [mode]);
 
   return (
-    <ThemeContext.Provider value={{ theme, setTheme, mode, setMode, toggleMode }}>
+    <ThemeContext.Provider value={{ mode, setMode, toggleMode }}>
       {children}
     </ThemeContext.Provider>
   );
@@ -141,12 +106,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 export function useTheme(): ThemeContextValue {
   const ctx = useContext(ThemeContext);
   if (!ctx) {
-    // Fallback for components rendered outside the provider — return
-    // no-op setters so callers don't crash. The boot script still
-    // applied the right CSS attributes, so visually the page is fine.
     return {
-      theme: DEFAULT_THEME,
-      setTheme: () => {},
       mode: DEFAULT_MODE,
       setMode: () => {},
       toggleMode: () => {},

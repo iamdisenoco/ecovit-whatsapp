@@ -12,12 +12,11 @@ import { notificationText } from '@/lib/notifications/notification-text';
 import { ModeToggle } from '@/components/layout/mode-toggle';
 import { AppearancePanel } from '@/components/settings/appearance-panel';
 
-const themeState = vi.hoisted(() => ({ mode: 'dark', theme: 'violet' }));
+const themeState = vi.hoisted(() => ({ mode: 'dark' }));
 vi.mock('@/hooks/use-theme', () => ({
   useTheme: () => ({
     ...themeState,
     setMode: vi.fn(),
-    setTheme: vi.fn(),
     toggleMode: vi.fn(),
   }),
 }));
@@ -118,10 +117,8 @@ describe('Portuguese messages in their UI context', () => {
     );
     expect(html).toContain('aria-label="Usar o modo claro"');
     expect(html).toContain('aria-label="Usar o modo escuro"');
-    expect(html).toContain('Usar o tema Azul-cobalto');
-    expect(html).toContain(
-      'O padrão — transmite confiança com um toque descontraído.'
-    );
+    // ECOVIT: sin selector de acento (una sola paleta, DIS-04).
+    expect(html).not.toContain('Usar o tema');
     expect(html).not.toMatch(/Growth-coded|product-y|Use light|Use dark/);
   });
 

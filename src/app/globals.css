@@ -2,14 +2,16 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
+/* `dark:` sigue al tema de ECOVIT (`data-tema` en <html>), no a una clase `.dark`. */
+@custom-variant dark (&:where([data-tema="oscuro"], [data-tema="oscuro"] *));
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
-  --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-sans);
+  /* La letra de ECOVIT. `--fuente-ecovit` la pone next/font en layout.tsx. */
+  --font-sans: var(--fuente-ecovit), "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-heading: var(--fuente-ecovit), "Segoe UI", sans-serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -52,6 +54,12 @@
   --color-status-warning: var(--status-warning);
   --color-status-serious: var(--status-serious);
   --color-status-critical: var(--status-critical);
+  /* ECOVIT: el azul de la marca y el azul señal de la acción siguiente. */
+  --color-marca: var(--marca);
+  --color-marca-foreground: var(--marca-foreground);
+  --color-accion: var(--accion);
+  --color-accion-foreground: var(--accion-foreground);
+  --color-accion-hover: var(--accion-hover);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -62,171 +70,188 @@
 }
 
 /* ============================================================
- * THEMING — two orthogonal dimensions
+ * TEMA ECOVIT (DIS-04, 19-nov) sobre los tokens de shadcn de wacrm.
  *
- *   1. MODE   (light / dark)  → neutral surfaces. Selected with
- *      `document.documentElement.dataset.mode`. Defaults to dark.
- *   2. ACCENT (violet / …)    → the primary color only. Selected
- *      with `document.documentElement.dataset.theme`.
+ *   60 · neutros   lienzo #F5F5F7, paneles blancos, tinta #1D1D1F
+ *   30 · marca     azul ECOVIT #3F5875 (aquí, `--primary`)
+ *   10 · acción    azul señal #0066CC: SOLO la acción siguiente (`bg-accion`)
  *
- * The two compose: any accent works in either mode. Neutral
- * tokens (background / card / border / muted / sidebar surfaces /
- * neutral charts / radius) live in the MODE blocks below; accent
- * tokens (--primary*, --ring, --chart-1, --sidebar-primary*,
- * --sidebar-ring) live in the ACCENT blocks. They set disjoint
- * variables, so cascade order between them doesn't matter.
+ * Los valores y su contraste medido vienen de `app/globals.css` de ECOVIT;
+ * si cambian allá, se cambian acá. No hay acentos a elegir: wacrm tenía
+ * cinco (violeta por defecto) y arrancaba en oscuro.
  *
- * `:root` carries the dark-mode + violet defaults so a visitor
- * renders correctly before JS runs; the boot script in
- * layout.tsx replays the saved mode + accent before first paint.
- *
- * The three `--primary-*` extras (hover / soft / soft-2) feed
- * hovered primary buttons and tinted-primary surfaces (sidebar
- * active pill, validation badges).
- *
- * Token shapes come straight from the design handoff at
- * project/Color Themes.html — change one, change the other.
+ * Claro u oscuro lo decide `data-tema` en <html>, como en ECOVIT: lo pone
+ * el script de arranque de layout.tsx (lo guardado o, si no, el sistema).
+ * El bloque @media cubre el instante sin atributo (sin JS).
  * ============================================================ */
 
-/* ---- MODE: neutral surfaces ---- */
-
 :root,
-html[data-mode="dark"] {
-  --background: oklch(0.13 0.01 260);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.18 0.01 260);
-  --card-2: oklch(0.205 0.01 260);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.18 0.01 260);
-  --popover-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.22 0.01 260);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.22 0.01 260);
-  --muted-foreground: oklch(0.65 0.01 260);
-  --accent: oklch(0.22 0.01 260);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.28 0.01 260);
-  --input: oklch(0.28 0.01 260);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.16 0.01 260);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.22 0.01 260);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(0.28 0.01 260);
-  --status-good: #0ca30c;
-  --status-warning: #fab219;
-  --status-serious: #ec835a;
-  --status-critical: #e05252;
+[data-tema="claro"] {
+  --background: #F5F5F7;        /* lienzo */
+  --foreground: #1D1D1F;        /* tinta */
+  --card: #FFFFFF;              /* panel */
+  --card-2: #F0F2F5;            /* panel-alto */
+  --card-foreground: #1D1D1F;
+  --popover: #FFFFFF;
+  --popover-foreground: #1D1D1F;
+  --secondary: #F0F2F5;
+  --secondary-foreground: #1D1D1F;
+  --muted: #F0F2F5;
+  --muted-foreground: #5A6069;  /* tinta-3: 5,63:1 sobre niebla */
+  --accent: #EEF2F5;            /* niebla */
+  --accent-foreground: #1D1D1F;
+  --destructive: #A54138;       /* mal */
+  --border: #E2E6EA;
+  --input: #A9B2BC;             /* borde-neto: el borde de un campo se tiene que ver (3:1) */
+  --radius: 0.875rem;           /* 14px = radio «control»; xl ≈ 20px = «caja» */
+
+  /* El azul de la marca hace de «primary» de shadcn: botones, píldora activa,
+     foco. Es el 30 de la regla 60-30-10. */
+  --primary: #3F5875;
+  --primary-foreground: #FFFFFF;
+  --primary-hover: #34495F;
+  --primary-soft: color-mix(in srgb, #3F5875 12%, transparent);
+  --primary-soft-2: color-mix(in srgb, #3F5875 20%, transparent);
+  --ring: #3F5875;              /* anillo de foco: 6,73:1 sobre lienzo */
+
+  --chart-1: #3F5875;
+  --chart-2: #7EA7BC;           /* acero */
+  --chart-3: #A9C5DA;
+  --chart-4: #C9DCEA;
+  --chart-5: #DCE7EF;
+
+  --sidebar: #FFFFFF;
+  --sidebar-foreground: #1D1D1F;
+  --sidebar-accent: #F0F2F5;
+  --sidebar-accent-foreground: #1D1D1F;
+  --sidebar-border: #E2E6EA;
+  --sidebar-primary: #3F5875;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-ring: #3F5875;
+
+  --status-good: #2B6A6E;       /* ok */
+  --status-warning: #8B5E15;    /* aviso */
+  --status-serious: #9A4F1F;
+  --status-critical: #A54138;   /* mal */
+
+  --marca: #3F5875;
+  --marca-foreground: #FFFFFF;
+  /* El 10: el azul señal SOLO para la acción siguiente, una por pantalla. */
+  --accion: #0066CC;
+  --accion-foreground: #FFFFFF;
+  --accion-hover: #0057AD;
+
+  color-scheme: light;
 }
 
-html[data-mode="light"] {
-  --background: oklch(0.99 0.002 260);
-  --foreground: oklch(0.21 0.01 260);
-  --card: oklch(1 0 0);
-  --card-2: oklch(0.985 0.002 260);
-  --card-foreground: oklch(0.21 0.01 260);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.21 0.01 260);
-  --secondary: oklch(0.967 0.003 260);
-  --secondary-foreground: oklch(0.25 0.01 260);
-  --muted: oklch(0.967 0.003 260);
-  --muted-foreground: oklch(0.52 0.015 260);
-  --accent: oklch(0.96 0.004 260);
-  --accent-foreground: oklch(0.25 0.01 260);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0.004 260);
-  --input: oklch(0.922 0.004 260);
-  --chart-2: oklch(0.6 0.1 260);
-  --chart-3: oklch(0.7 0.06 260);
-  --chart-4: oklch(0.8 0.04 260);
-  --chart-5: oklch(0.87 0.03 260);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0.002 260);
-  --sidebar-foreground: oklch(0.21 0.01 260);
-  --sidebar-accent: oklch(0.96 0.004 260);
-  --sidebar-accent-foreground: oklch(0.25 0.01 260);
-  --sidebar-border: oklch(0.922 0.004 260);
-  --status-good: #0b7f0b;
-  --status-warning: #946100;
-  --status-serious: #c2532a;
-  --status-critical: #c43232;
+[data-tema="oscuro"] {
+  --background: #0F1113;
+  --foreground: #F5F5F7;
+  --card: #18191C;
+  --card-2: #1F2124;
+  --card-foreground: #F5F5F7;
+  --popover: #18191C;
+  --popover-foreground: #F5F5F7;
+  --secondary: #1F2124;
+  --secondary-foreground: #F5F5F7;
+  --muted: #1F2124;
+  --muted-foreground: #9CA3AB;  /* 6,33:1 */
+  --accent: #1F2124;
+  --accent-foreground: #F5F5F7;
+  --destructive: #F0958B;
+  --border: #2A2D31;
+  --input: #474C53;
+
+  --primary: #8FB0C9;           /* 7,09:1 sobre niebla oscura */
+  --primary-foreground: #0E1620;
+  --primary-hover: #A9C5DA;
+  --primary-soft: color-mix(in srgb, #8FB0C9 14%, transparent);
+  --primary-soft-2: color-mix(in srgb, #8FB0C9 24%, transparent);
+  --ring: #8FB0C9;
+
+  --chart-1: #8FB0C9;
+  --chart-2: #5B8097;
+  --chart-3: #44627A;
+  --chart-4: #2F4558;
+  --chart-5: #1E2A36;
+
+  --sidebar: #18191C;
+  --sidebar-foreground: #F5F5F7;
+  --sidebar-accent: #1F2124;
+  --sidebar-accent-foreground: #F5F5F7;
+  --sidebar-border: #2A2D31;
+  --sidebar-primary: #8FB0C9;
+  --sidebar-primary-foreground: #0E1620;
+  --sidebar-ring: #8FB0C9;
+
+  --status-good: #7CC4C0;
+  --status-warning: #E7B65D;
+  --status-serious: #F0A070;
+  --status-critical: #F0958B;
+
+  --marca: #8FB0C9;
+  --marca-foreground: #0E1620;
+  --accion: #4C9BFF;
+  --accion-foreground: #04162B;
+  --accion-hover: #6FB0FF;
+
+  color-scheme: dark;
 }
 
-/* ---- ACCENT: primary color ---- */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-tema]) {
+    --background: #0F1113;
+    --foreground: #F5F5F7;
+    --card: #18191C;
+    --card-2: #1F2124;
+    --card-foreground: #F5F5F7;
+    --popover: #18191C;
+    --popover-foreground: #F5F5F7;
+    --secondary: #1F2124;
+    --secondary-foreground: #F5F5F7;
+    --muted: #1F2124;
+    --muted-foreground: #9CA3AB;  /* 6,33:1 */
+    --accent: #1F2124;
+    --accent-foreground: #F5F5F7;
+    --destructive: #F0958B;
+    --border: #2A2D31;
+    --input: #474C53;
 
-:root,
-html[data-theme="violet"] {
-  --primary: oklch(0.526 0.247 293);
-  --primary-foreground: oklch(0.985 0 0);
-  --primary-hover: oklch(0.6 0.22 293);
-  --primary-soft: oklch(0.526 0.247 293 / 0.12);
-  --primary-soft-2: oklch(0.526 0.247 293 / 0.2);
-  --ring: oklch(0.526 0.247 293);
-  --chart-1: oklch(0.526 0.247 293);
-  --sidebar-primary: oklch(0.526 0.247 293);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-ring: oklch(0.526 0.247 293);
-}
+    --primary: #8FB0C9;           /* 7,09:1 sobre niebla oscura */
+    --primary-foreground: #0E1620;
+    --primary-hover: #A9C5DA;
+    --primary-soft: color-mix(in srgb, #8FB0C9 14%, transparent);
+    --primary-soft-2: color-mix(in srgb, #8FB0C9 24%, transparent);
+    --ring: #8FB0C9;
 
-html[data-theme="emerald"] {
-  --primary: oklch(0.62 0.16 162);
-  --primary-foreground: oklch(0.16 0.02 162);
-  --primary-hover: oklch(0.68 0.15 162);
-  --primary-soft: oklch(0.62 0.16 162 / 0.12);
-  --primary-soft-2: oklch(0.62 0.16 162 / 0.22);
-  --ring: oklch(0.62 0.16 162);
-  --chart-1: oklch(0.62 0.16 162);
-  --chart-2: oklch(0.7 0.14 195);
-  --sidebar-primary: oklch(0.62 0.16 162);
-  --sidebar-primary-foreground: oklch(0.16 0.02 162);
-  --sidebar-ring: oklch(0.62 0.16 162);
-}
+    --chart-1: #8FB0C9;
+    --chart-2: #5B8097;
+    --chart-3: #44627A;
+    --chart-4: #2F4558;
+    --chart-5: #1E2A36;
 
-html[data-theme="cobalt"] {
-  --primary: oklch(0.585 0.2 254);
-  --primary-foreground: oklch(0.985 0 0);
-  --primary-hover: oklch(0.66 0.18 254);
-  --primary-soft: oklch(0.585 0.2 254 / 0.12);
-  --primary-soft-2: oklch(0.585 0.2 254 / 0.22);
-  --ring: oklch(0.585 0.2 254);
-  --chart-1: oklch(0.585 0.2 254);
-  --chart-2: oklch(0.7 0.15 220);
-  --sidebar-primary: oklch(0.585 0.2 254);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-ring: oklch(0.585 0.2 254);
-}
+    --sidebar: #18191C;
+    --sidebar-foreground: #F5F5F7;
+    --sidebar-accent: #1F2124;
+    --sidebar-accent-foreground: #F5F5F7;
+    --sidebar-border: #2A2D31;
+    --sidebar-primary: #8FB0C9;
+    --sidebar-primary-foreground: #0E1620;
+    --sidebar-ring: #8FB0C9;
 
-html[data-theme="amber"] {
-  --primary: oklch(0.745 0.16 65);
-  --primary-foreground: oklch(0.18 0.03 65);
-  --primary-hover: oklch(0.8 0.15 65);
-  --primary-soft: oklch(0.745 0.16 65 / 0.12);
-  --primary-soft-2: oklch(0.745 0.16 65 / 0.22);
-  --ring: oklch(0.745 0.16 65);
-  --chart-1: oklch(0.745 0.16 65);
-  --chart-2: oklch(0.7 0.15 35);
-  --sidebar-primary: oklch(0.745 0.16 65);
-  --sidebar-primary-foreground: oklch(0.18 0.03 65);
-  --sidebar-ring: oklch(0.745 0.16 65);
-}
+    --status-good: #7CC4C0;
+    --status-warning: #E7B65D;
+    --status-serious: #F0A070;
+    --status-critical: #F0958B;
 
-html[data-theme="rose"] {
-  --primary: oklch(0.645 0.22 16);
-  --primary-foreground: oklch(0.985 0 0);
-  --primary-hover: oklch(0.71 0.2 16);
-  --primary-soft: oklch(0.645 0.22 16 / 0.12);
-  --primary-soft-2: oklch(0.645 0.22 16 / 0.22);
-  --ring: oklch(0.645 0.22 16);
-  --chart-1: oklch(0.645 0.22 16);
-  --chart-2: oklch(0.7 0.18 340);
-  --sidebar-primary: oklch(0.645 0.22 16);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-ring: oklch(0.645 0.22 16);
+    --marca: #8FB0C9;
+    --marca-foreground: #0E1620;
+    --accion: #4C9BFF;
+    --accion-foreground: #04162B;
+    --accion-hover: #6FB0FF;
+
+    color-scheme: dark;
+  }
 }
 
 @layer base {

@@ -17,7 +17,7 @@
     "linkInvalid": "No se pudo iniciar sesión con ese enlace. Si estabas confirmando tu correo, es posible que ya esté verificado; inicia sesión abajo. Para restablecer la contraseña, pide un enlace nuevo y ábrelo en el mismo navegador desde el que lo solicitaste."
   },
   "Sidebar": {
-    "title": "Plantilla de CRM para WhatsApp",
+    "title": "ECOVIT · Conversaciones",
     "primaryNav": "Principal",
     "dashboard": "Panel",
     "inbox": "Bandeja de entrada",
@@ -2461,7 +2461,7 @@
     "lastMessage": " Último mensaje del cliente: “{message}”"
   },
   "Metadata": {
-    "description": "Plantilla de CRM para WhatsApp que puedes alojar tú mismo."
+    "description": "Las conversaciones de WhatsApp de ECOVIT, con el usuario del módulo comercial."
   },
   "Currency": {
     "USD": "Dólar estadounidense",
