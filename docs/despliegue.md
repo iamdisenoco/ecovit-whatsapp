@@ -14,6 +14,10 @@ de ECOVIT. Las migraciones están en el repo `ecovit-comercial` (0110 a 0115) y 
   con el plan Pro se puede volver a `*/5 * * * *`.
 - **Dominio propio** (necesita el «confirmo» de Jon): un subdominio del mismo dominio de ECOVIT,
   por ejemplo `whatsapp.<dominio>`. Sin dominio compartido la sesión de ECOVIT no sirve acá.
+- **Cómo se entra:** sin `NEXT_PUBLIC_COOKIE_DOMAIN` (por ejemplo en `*.vercel.app`, que no deja
+  compartir la cookie), se entra por `/ingresar` de esta app, con el mismo correo y la misma
+  contraseña de ECOVIT. Con dominio propio y la variable puesta, se entra por el ingreso de ECOVIT.
+  En los dos casos valen los mismos controles: perfil activo en ECOVIT y rol con acceso.
 
 ## 2. Vercel: variables de entorno (Production)
 
@@ -23,7 +27,7 @@ de ECOVIT. Las migraciones están en el repo `ecovit-comercial` (0110 a 0115) y 
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | la misma de ECOVIT | no |
 | `SUPABASE_SERVICE_ROLE_KEY` | la clave de servicio de ECOVIT | **sí** |
 | `NEXT_PUBLIC_ECOVIT_URL` | raíz de la app comercial, sin barra final | no |
-| `NEXT_PUBLIC_COOKIE_DOMAIN` | `.<dominio>`, igual en ECOVIT | no |
+| `NEXT_PUBLIC_COOKIE_DOMAIN` | `.<dominio>`, igual en ECOVIT; vacía sin dominio propio | no |
 | `NEXT_PUBLIC_APP_LOCALE` | `es` | no |
 | `NEXT_PUBLIC_SITE_URL` | la URL pública de esta app | no |
 | `ENCRYPTION_KEY` | 64 caracteres hex (`openssl rand -hex 32`) | **sí** |
