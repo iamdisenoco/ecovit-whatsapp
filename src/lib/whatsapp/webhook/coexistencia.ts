@@ -55,12 +55,10 @@ export function ecoDelCelularCallaAlBot(
 }
 
 /** ¿Al bot lo calló el celular en este chat (y no una persona con «Tomar»)? */
-export function calladoPorCelular(
-  conversacion: Pick<
-    ConversacionFila,
-    'ai_autoreply_disabled' | 'ai_handoff_summary'
-  >
-): boolean {
+export function calladoPorCelular(conversacion: {
+  ai_autoreply_disabled?: boolean | null;
+  ai_handoff_summary?: string | null;
+}): boolean {
   return (
     !!conversacion.ai_autoreply_disabled &&
     conversacion.ai_handoff_summary === MOTIVO_CELULAR

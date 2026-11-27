@@ -348,7 +348,9 @@
       "clearAll": "Clear all",
       "noConversations": "No conversations found",
       "noMessagesYet": "No messages yet",
-      "unknown": "Unknown"
+      "unknown": "Unknown",
+      "celular": "Phone",
+      "celularTitulo": "A person is handling this from the phone"
     },
     "messageThread": {
       "backToConversations": "Back to conversations",
@@ -533,7 +535,10 @@
       "tookOver": "You’ve taken over this chat.",
       "resumed": "AI resumed.",
       "updateError": "Couldn’t update the AI assistant.",
-      "networkError": "Couldn’t reach the server."
+      "networkError": "Couldn’t reach the server.",
+      "celular": "A person is handling this from the phone",
+      "celularVuelveA": "the assistant replies again from {hora}",
+      "celularProximo": "the assistant answers the customer’s next message"
     }
   },
   "Contacts": {

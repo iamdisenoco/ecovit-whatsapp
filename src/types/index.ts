@@ -217,6 +217,12 @@ export interface Conversation {
   ai_autoreply_disabled?: boolean;
   ai_reply_count?: number;
   ai_handoff_summary?: string | null;
+  /**
+   * ECOVIT · coexistencia: `created_at` del último mensaje contestado desde
+   * el celular en este chat (embebido en la misma lectura). Con él se dice a
+   * qué hora vuelve el bot. `null` = no hay ninguno; ausente = no se leyó.
+   */
+  ultimo_eco_celular_at?: string | null;
 }
 
 // ============================================================
@@ -274,6 +280,8 @@ export interface Message {
   status: MessageStatus;
   created_at: string;
   reply_to_message_id?: string;
+  /** ECOVIT · coexistencia (0115): lo contestó un vendedor desde el celular. */
+  desde_celular?: boolean;
   /**
    * Only set when `content_type === 'interactive'` — the stable id of
    * the button or list row the customer tapped. The Flows engine uses

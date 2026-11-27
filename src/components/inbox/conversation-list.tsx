@@ -3,14 +3,15 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
-  CONVERSATION_SELECT,
+  leerConversaciones,
   matchesContactFilters,
   normalizeConversations,
 } from "@/lib/inbox/conversations";
 import { applyInboxFilter, type InboxFilter } from "@/lib/inbox/inbox-filters";
 import { cn } from "@/lib/utils";
 import type { Conversation, ConversationStatus, Tag } from "@/types";
-import { Search, ChevronDown, X } from "lucide-react";
+import { Search, ChevronDown, X, Smartphone } from "lucide-react";
+import { calladoPorCelular } from "@/lib/whatsapp/webhook/coexistencia";
 import { formatDistanceToNow } from "date-fns";
 import { useLocale, useTranslations } from "next-intl";
 import { getDateLocale } from "@/i18n/date-locale";
@@ -105,10 +106,7 @@ export function ConversationList({
     let cancelled = false;
 
     (async () => {
-      const { data, error } = await supabase
-        .from("conversations")
-        .select(CONVERSATION_SELECT)
-        .order("last_message_at", { ascending: false });
+      const { data, error } = await leerConversaciones(supabase);
 
       if (cancelled) return;
 
@@ -490,6 +488,15 @@ function ConversationItem({
             {conversation.last_message_text || t("noMessagesYet")}
           </p>
           <div className="flex shrink-0 items-center gap-1.5">
+            {calladoPorCelular(conversation) && (
+              <span
+                className="inline-flex items-center gap-0.5 rounded-full bg-muted px-1.5 py-px text-[10px] font-medium text-muted-foreground"
+                title={t("celularTitulo")}
+              >
+                <Smartphone className="h-2.5 w-2.5" aria-hidden />
+                {t("celular")}
+              </span>
+            )}
             {conversation.unread_count > 0 && (
               <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
                 {conversation.unread_count}

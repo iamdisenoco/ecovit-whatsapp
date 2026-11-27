@@ -348,7 +348,9 @@
       "clearAll": "Limpar tudo",
       "noConversations": "Nenhuma conversa encontrada",
       "noMessagesYet": "Nenhuma mensagem ainda",
-      "unknown": "Desconhecido"
+      "unknown": "Desconhecido",
+      "celular": "Celular",
+      "celularTitulo": "Uma pessoa atende pelo celular"
     },
     "messageThread": {
       "backToConversations": "Voltar às conversas",
@@ -533,7 +535,10 @@
       "tookOver": "Você assumiu esta conversa.",
       "resumed": "IA retomada.",
       "updateError": "Não foi possível atualizar o assistente de IA.",
-      "networkError": "Não foi possível conectar ao servidor."
+      "networkError": "Não foi possível conectar ao servidor.",
+      "celular": "Uma pessoa atende pelo celular",
+      "celularVuelveA": "o assistente volta a responder a partir das {hora}",
+      "celularProximo": "o assistente responde a próxima mensagem do cliente"
     }
   },
   "Contacts": {

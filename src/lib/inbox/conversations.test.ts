@@ -143,3 +143,32 @@ describe("normalizeConversation", () => {
     expect(normalizeConversation(raw).contact).toBeNull();
   });
 });
+
+describe("normalizeConversation · último eco del celular", () => {
+  const base = {
+    id: "c1",
+    user_id: "u1",
+    contact_id: "ct1",
+    status: "open" as const,
+    unread_count: 0,
+    created_at: "",
+    updated_at: "",
+    contact: null,
+  };
+
+  it("aplana el eco embebido en ultimo_eco_celular_at y quita la llave cruda", () => {
+    const n = normalizeConversation({
+      ...base,
+      eco_celular: [{ created_at: "2026-11-20T12:00:00Z" }],
+    });
+    expect(n.ultimo_eco_celular_at).toBe("2026-11-20T12:00:00Z");
+    expect("eco_celular" in n).toBe(false);
+  });
+
+  it("embebido vacío = no hay eco (null); sin embebido = no se leyó (ausente)", () => {
+    expect(
+      normalizeConversation({ ...base, eco_celular: [] }).ultimo_eco_celular_at,
+    ).toBeNull();
+    expect("ultimo_eco_celular_at" in normalizeConversation(base)).toBe(false);
+  });
+});
