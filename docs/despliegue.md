@@ -9,8 +9,9 @@ de ECOVIT. Las migraciones están en el repo `ecovit-comercial` (0110 a 0115) y 
 - Importar `iamdisenoco/ecovit-whatsapp` (framework Next.js, rama `main`).
 - **Despliegues automáticos:** `vercel.json` trae `"git": { "deploymentEnabled": false }` para que
   no salga nada antes de tiempo. Se pasa a `true` en un PR cuando las variables estén puestas.
-- **Plan:** el cron `/api/whatsapp/cron` corre cada 5 minutos. En Hobby, Vercel solo permite crons
-  diarios: con Hobby hay que cambiarlo a una vez al día (los envíos dudosos tardan más en marcarse).
+- **Plan:** el cron `/api/whatsapp/cron` corre una vez al día (10:17 UTC, 5:17 a. m. de Bogotá),
+  porque Vercel Hobby solo acepta crons diarios. Los envíos dudosos tardan hasta un día en marcarse;
+  con el plan Pro se puede volver a `*/5 * * * *`.
 - **Dominio propio** (necesita el «confirmo» de Jon): un subdominio del mismo dominio de ECOVIT,
   por ejemplo `whatsapp.<dominio>`. Sin dominio compartido la sesión de ECOVIT no sirve acá.
 
