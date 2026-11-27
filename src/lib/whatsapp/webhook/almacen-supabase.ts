@@ -322,6 +322,26 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
     return (data?.id as string | undefined) ?? null;
   }
 
+  async ultimoEcoCelular(conversacionId: string): Promise<string | null> {
+    // `desde_celular` y `created_at` se leen con el `select` de tabla de
+    // `messages` (0110/0115 solo pasan a columnas el `insert`).
+    const { data, error } = await this.db
+      .from('messages')
+      .select('created_at')
+      .eq('conversation_id', conversacionId)
+      .eq('desde_celular', true)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    // Si falla, se lanza: un «no hay eco» falso dejaría al bot callado sin
+    // razón, y el reintento del proveedor lo arregla.
+    if (error)
+      throw new ErrorAlmacen(
+        `No se pudo leer la última respuesta del celular: ${error.message}`
+      );
+    return (data?.created_at as string | undefined) ?? null;
+  }
+
   async conciliarEnvioPendiente(
     conversacionId: string,
     texto: string | null,

@@ -1348,6 +1348,7 @@ export function MessageThread({
         conversationId={conversation.id}
         disabled={conversation.ai_autoreply_disabled ?? false}
         handoffSummary={conversation.ai_handoff_summary}
+        ultimoEcoCelular={conversation.ultimo_eco_celular_at}
         assignedAgentId={assignedAgentId}
         actualizadoEn={conversation.actualizado_en ?? null}
         currentUserId={user?.id}

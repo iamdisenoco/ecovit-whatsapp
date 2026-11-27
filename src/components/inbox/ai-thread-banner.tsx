@@ -7,6 +7,8 @@ import { toast } from "sonner";
 import { useTranslations } from "next-intl";
 import { useAuth } from "@/hooks/use-auth";
 import { fetchAiAccountStatus } from "@/lib/ai/account-status-cache";
+import { MOTIVO_CELULAR } from "@/lib/whatsapp/webhook/coexistencia";
+import { textoCelular } from "@/lib/inbox/celular";
 
 interface AiThreadBannerProps {
   conversationId: string;
@@ -14,6 +16,8 @@ interface AiThreadBannerProps {
   disabled: boolean;
   /** `conversations.ai_handoff_summary` — note the bot left on handoff. */
   handoffSummary?: string | null;
+  /** ECOVIT · coexistencia: `created_at` del último eco del celular del chat. */
+  ultimoEcoCelular?: string | null;
   /** Current assignee; when a human owns the thread the bot won't run,
    *  so the "AI active" banner is suppressed. */
   assignedAgentId?: string | null;
@@ -44,6 +48,7 @@ export function AiThreadBanner({
   conversationId,
   disabled,
   handoffSummary,
+  ultimoEcoCelular,
   assignedAgentId,
   actualizadoEn,
   onChange,
@@ -57,6 +62,15 @@ export function AiThreadBanner({
   // state via realtime) changes.
   const [paused, setPaused] = useState(disabled);
   useEffect(() => setPaused(disabled), [conversationId, disabled]);
+
+  // Callado por el celular: la nota es la marca, no un texto para mostrar.
+  const porCelular = handoffSummary === MOTIVO_CELULAR;
+  const [ahora, setAhora] = useState(() => Date.now());
+  useEffect(() => {
+    if (!porCelular) return;
+    const id = window.setInterval(() => setAhora(Date.now()), 30_000);
+    return () => window.clearInterval(id);
+  }, [porCelular]);
 
   useEffect(() => {
     if (!accountId) return;
@@ -123,10 +137,16 @@ export function AiThreadBanner({
       <Banner tone="muted">
         <div className="min-w-0 flex-1">
           <p className="font-medium text-foreground">{t("pausedTitle")}</p>
-          {handoffSummary && (
-            <p className="truncate text-muted-foreground" title={handoffSummary}>
-              {handoffSummary}
+          {porCelular ? (
+            <p className="text-muted-foreground">
+              {textoCelular(t, ultimoEcoCelular, assignedAgentId, ahora)}
             </p>
+          ) : (
+            handoffSummary && (
+              <p className="truncate text-muted-foreground" title={handoffSummary}>
+                {handoffSummary}
+              </p>
+            )
           )}
         </div>
         <BannerButton onClick={() => toggle(false)} busy={busy} icon={Undo2}>

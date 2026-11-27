@@ -27,9 +27,10 @@ import {
 } from './almacen';
 import {
   MOTIVO_CELULAR,
-  debeDespertarPorInactividad,
+  debeVolverElBot,
   ecoDelCelularCallaAlBot,
   entrantePuedeDespertarAlBot,
+  puedeVolverPorCelular,
 } from './coexistencia';
 
 /** Texto que queda en el chat mientras el adjunto no se haya bajado. */
@@ -272,9 +273,13 @@ export class Procesador {
       insertado = { id };
     }
 
-    // Antes de registrar el entrante: `last_inbound_at` todavía es el anterior.
-    if (debeDespertarPorInactividad(conversacion, evento.enviadoEn)) {
-      await this.almacen.despertarBot(conversacion.id, MOTIVO_CELULAR);
+    // Callado por el celular y sin dueño: vuelve si la última respuesta del
+    // celular ya tiene `HORAS_CELULAR`. Solo entonces se lee el último eco.
+    if (puedeVolverPorCelular(conversacion)) {
+      const ultimoEco = await this.almacen.ultimoEcoCelular(conversacion.id);
+      if (debeVolverElBot(conversacion, ultimoEco, evento.enviadoEn)) {
+        await this.almacen.despertarBot(conversacion.id, MOTIVO_CELULAR);
+      }
     }
     const { primerEntrante } = await this.almacen.registrarEntrante(
       conversacion,

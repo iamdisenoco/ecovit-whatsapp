@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { createClient } from "@/lib/supabase/client";
 import {
-  CONVERSATION_SELECT,
+  leerConversaciones,
   normalizeConversation,
 } from "@/lib/inbox/conversations";
 import type { Conversation, Message, Contact, ConversationStatus } from "@/types";
@@ -162,11 +162,8 @@ function InboxPageInner() {
     hydratingConvIdsRef.current.add(convId);
     try {
       const supabase = createClient();
-      const { data, error } = await supabase
-        .from("conversations")
-        .select(CONVERSATION_SELECT)
-        .eq("id", convId)
-        .maybeSingle();
+      const { data: filas, error } = await leerConversaciones(supabase, convId);
+      const data = filas?.[0] ?? null;
       if (error) {
         // Supabase errors have non-enumerable properties — log fields
         // explicitly so the console message isn't just `{}`.
@@ -190,7 +187,12 @@ function InboxPageInner() {
           // realtime payloads never carry.
           return prev.map((c) =>
             c.id === fetched.id
-              ? { ...c, contact: c.contact ?? fetched.contact }
+              ? {
+                  ...c,
+                  contact: c.contact ?? fetched.contact,
+                  ultimo_eco_celular_at:
+                    c.ultimo_eco_celular_at ?? fetched.ultimo_eco_celular_at,
+                }
               : c,
           );
         }
@@ -251,6 +253,13 @@ function InboxPageInner() {
           newMsg.conversation_id === activeConversation.id
         ) {
           setMessages((prev) => applyRealtimeInsert(prev, newMsg));
+          if (newMsg.desde_celular) {
+            setActiveConversation((prev) =>
+              prev && prev.id === newMsg.conversation_id
+                ? { ...prev, ultimo_eco_celular_at: newMsg.created_at }
+                : prev,
+            );
+          }
         }
 
         // Update conversation list preview. We need to know *synchronously*
@@ -270,6 +279,10 @@ function InboxPageInner() {
                       activeConversation?.id === newMsg.conversation_id
                         ? 0
                         : c.unread_count + 1,
+                    // Un eco del celular reinicia la hora en que vuelve el bot.
+                    ...(newMsg.desde_celular
+                      ? { ultimo_eco_celular_at: newMsg.created_at }
+                      : {}),
                   }
                 : c,
             ),

@@ -348,7 +348,9 @@
       "clearAll": "Limpiar todo",
       "noConversations": "No se encontraron conversaciones",
       "noMessagesYet": "Aún no hay mensajes",
-      "unknown": "Desconocido"
+      "unknown": "Desconocido",
+      "celular": "Celular",
+      "celularTitulo": "Lo atiende una persona desde el celular"
     },
     "messageThread": {
       "backToConversations": "Volver a las conversaciones",
@@ -533,7 +535,10 @@
       "tookOver": "Tomaste el control de este chat.",
       "resumed": "La IA retomó el chat y quedó sin asignar.",
       "updateError": "No se pudo actualizar el asistente de IA.",
-      "networkError": "No se pudo conectar con el servidor."
+      "networkError": "No se pudo conectar con el servidor.",
+      "celular": "Lo atiende una persona desde el celular",
+      "celularVuelveA": "el asistente vuelve a contestar desde las {hora}",
+      "celularProximo": "el asistente contesta el próximo mensaje del cliente"
     }
   },
   "Contacts": {

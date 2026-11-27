@@ -120,6 +120,12 @@ export interface AlmacenWhatsApp {
   ): Promise<string | null>;
 
   /**
+   * `created_at` del último mensaje contestado desde el celular en ese chat
+   * (`desde_celular = true`), o `null` si no hay ninguno.
+   */
+  ultimoEcoCelular(conversacionId: string): Promise<string | null>;
+
+  /**
    * Un envío de la bandeja se guarda en `sending` sin wamid ANTES de llamar
    * al proveedor; si quedó dudoso pasa a `incierto`. Su `message.sent` le pone
    * el wamid aquí, pero solo si hay EXACTAMENTE un candidato con ese texto
