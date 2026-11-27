@@ -167,6 +167,35 @@ describe('los estados no retroceden', () => {
   });
 });
 
+async function entra(a: AlmacenMemoria, id: string, sentAt: string) {
+  await procesar(
+    a,
+    mensajeRecibido({ id, wamid: `w-${id}`, telefono: TEL, sentAt })
+  );
+}
+
+async function eco(a: AlmacenMemoria, id: string, sentAt: string) {
+  await procesar(
+    a,
+    mensajeEnviado({
+      id,
+      wamid: `w-${id}`,
+      participante: '573001112233',
+      sentAt,
+    })
+  );
+}
+
+/** Un chat donde el cliente escribió y el vendedor contestó desde el celular. */
+async function calladoALas(sentAt: string) {
+  const a = new AlmacenMemoria();
+  await entra(a, 'in1', new Date(Date.parse(sentAt) - 5 * 60_000).toISOString());
+  await eco(a, 'cel', sentAt);
+  expect(a.conversaciones[0].ai_autoreply_disabled).toBe(true);
+  expect(a.conversaciones[0].ai_handoff_summary).toBe(MOTIVO_CELULAR);
+  return a;
+}
+
 describe('coexistencia con el celular (RF-M03.10)', () => {
   it('un mensaje desde el celular se guarda como agente y calla al bot en ese chat', async () => {
     const a = new AlmacenMemoria();
@@ -263,49 +292,50 @@ describe('coexistencia con el celular (RF-M03.10)', () => {
     expect(r.trabajos.filter((t) => t.clase === 'motores')).toHaveLength(1);
   });
 
-  it('callado por el celular, el cliente vuelve tras 24 h: el bot vuelve', async () => {
-    const a = new AlmacenMemoria();
-    await procesar(
-      a,
-      mensajeRecibido({
-        id: 'in1',
-        wamid: 'w1',
-        telefono: TEL,
-        sentAt: '2026-11-20T10:00:00Z',
-      })
-    );
-    await procesar(
-      a,
-      mensajeEnviado({
-        id: 'cel',
-        wamid: 'wc',
-        participante: '573001112233',
-        sentAt: '2026-11-20T10:05:00Z',
-      })
-    );
+  it('callado por el celular: el bot vuelve 4 h después del ÚLTIMO eco, no antes', async () => {
+    const a = await calladoALas('2026-11-20T10:00:00Z');
+    // 3 h 59: sigue callado.
+    await entra(a, 'in2', '2026-11-20T13:59:00Z');
     expect(a.conversaciones[0].ai_autoreply_disabled).toBe(true);
-
-    await procesar(
-      a,
-      mensajeRecibido({
-        id: 'in2',
-        wamid: 'w2',
-        telefono: TEL,
-        sentAt: '2026-11-20T12:00:00Z',
-      })
-    );
-    expect(a.conversaciones[0].ai_autoreply_disabled).toBe(true); // 2 h: sigue callado
-
-    await procesar(
-      a,
-      mensajeRecibido({
-        id: 'in3',
-        wamid: 'w3',
-        telefono: TEL,
-        sentAt: '2026-11-21T12:00:00Z',
-      })
-    );
+    // 4 h exactas: vuelve.
+    await entra(a, 'in3', '2026-11-20T14:00:00Z');
     expect(a.conversaciones[0].ai_autoreply_disabled).toBe(false);
+    expect(a.conversaciones[0].ai_handoff_summary).toBeNull();
+  });
+
+  it('un segundo eco del celular reinicia el reloj', async () => {
+    const a = await calladoALas('2026-11-20T10:00:00Z');
+    await eco(a, 'cel2', '2026-11-20T12:00:00Z');
+    expect(await a.ultimoEcoCelular(a.conversaciones[0].id)).toBe(
+      '2026-11-20T12:00:00Z'
+    );
+    // 4 h del primero, pero 2 h del segundo: sigue callado.
+    await entra(a, 'in2', '2026-11-20T14:00:00Z');
+    expect(a.conversaciones[0].ai_autoreply_disabled).toBe(true);
+    // 4 h del segundo: vuelve.
+    await entra(a, 'in3', '2026-11-20T16:00:00Z');
+    expect(a.conversaciones[0].ai_autoreply_disabled).toBe(false);
+  });
+
+  it('chat asignado a alguien: no vuelve aunque pasen las 4 h', async () => {
+    const a = await calladoALas('2026-11-20T10:00:00Z');
+    a.conversaciones[0].assigned_agent_id = 'vendedor-1';
+    await entra(a, 'in2', '2026-11-21T10:00:00Z');
+    expect(a.conversaciones[0].ai_autoreply_disabled).toBe(true);
+  });
+
+  it('pausado por una persona (otra nota): no vuelve', async () => {
+    const a = await calladoALas('2026-11-20T10:00:00Z');
+    a.conversaciones[0].ai_handoff_summary = 'Lo tomó Carlos';
+    await entra(a, 'in2', '2026-11-21T10:00:00Z');
+    expect(a.conversaciones[0].ai_autoreply_disabled).toBe(true);
+  });
+
+  it('callado por el celular pero sin ningún eco guardado: no vuelve', async () => {
+    const a = await calladoALas('2026-11-20T10:00:00Z');
+    for (const m of a.mensajes) m.desde_celular = false;
+    await entra(a, 'in2', '2026-11-21T10:00:00Z');
+    expect(a.conversaciones[0].ai_autoreply_disabled).toBe(true);
   });
 
   it('un entrante en espera (standby) no despierta a los motores', async () => {

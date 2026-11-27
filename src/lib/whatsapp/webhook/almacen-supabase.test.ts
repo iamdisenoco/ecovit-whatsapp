@@ -16,6 +16,9 @@ interface Llamada {
   args?: unknown;
   metodo: string;
   filtros: Array<[string, unknown]>;
+  columnas?: string;
+  orden?: Array<[string, unknown]>;
+  tope?: number;
 }
 
 /** Doble mínimo: cada `from` devuelve filas según la tabla y registra lo que se pidió. */
@@ -38,7 +41,18 @@ function doble(
         return b;
       };
       for (const m of ['eq', 'is', 'in', 'gte']) b[m] = filtro(m);
-      for (const m of ['select', 'order', 'limit']) b[m] = () => b;
+      b.select = (c?: string) => {
+        ll.columnas = c;
+        return b;
+      };
+      b.order = (c: string, o: unknown) => {
+        (ll.orden ??= []).push([c, o]);
+        return b;
+      };
+      b.limit = (n: number) => {
+        ll.tope = n;
+        return b;
+      };
       b.update = (row: unknown) => {
         ll.metodo = 'update';
         ll.args = row;
@@ -125,6 +139,31 @@ describe('AlmacenSupabase con la 0115', () => {
         args: { p_conversacion: 'conv-1', p_motivo: 'nota' },
       }),
     ]);
+  });
+
+  it('ultimoEcoCelular: el más reciente con desde_celular, columnas nombradas', async () => {
+    const { db, llamadas } = doble({
+      messages: [{ created_at: '2026-11-20T12:00:00Z' }],
+    });
+    expect(await new AlmacenSupabase(db).ultimoEcoCelular('c-1')).toBe(
+      '2026-11-20T12:00:00Z'
+    );
+    expect(llamadas).toHaveLength(1);
+    expect(llamadas[0]).toMatchObject({
+      tabla: 'messages',
+      columnas: 'created_at',
+      filtros: [
+        ['eq:conversation_id', 'c-1'],
+        ['eq:desde_celular', true],
+      ],
+      orden: [['created_at', { ascending: false }]],
+      tope: 1,
+    });
+  });
+
+  it('ultimoEcoCelular: sin eco devuelve null', async () => {
+    const { db } = doble({ messages: [] });
+    expect(await new AlmacenSupabase(db).ultimoEcoCelular('c-1')).toBeNull();
   });
 
   it('guardarReferencia escribe la conversación y la cuenta del proveedor', async () => {

@@ -210,6 +210,14 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
     );
   }
 
+  async ultimoEcoCelular(conversacionId: string) {
+    const ecos = this.mensajes
+      .filter((m) => m.conversation_id === conversacionId && m.desde_celular)
+      .map((m) => m.created_at)
+      .sort((x, y) => Date.parse(y) - Date.parse(x));
+    return ecos[0] ?? null;
+  }
+
   async conciliarEnvioPendiente(
     conversacionId: string,
     texto: string | null,
