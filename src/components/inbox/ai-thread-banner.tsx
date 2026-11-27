@@ -1,14 +1,13 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Sparkles, Hand, Undo2, Loader2 } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useTranslations } from "next-intl";
 import { useAuth } from "@/hooks/use-auth";
 import { fetchAiAccountStatus } from "@/lib/ai/account-status-cache";
 import { MOTIVO_CELULAR } from "@/lib/whatsapp/webhook/coexistencia";
-import { textoCelular } from "@/lib/inbox/celular";
+import { avisoDelChat } from "@/lib/inbox/celular";
+import { VistaAiBanner } from "./ai-thread-banner-vista";
 
 interface AiThreadBannerProps {
   conversationId: string;
@@ -41,8 +40,9 @@ interface AiThreadBannerProps {
  * conversation:
  *   - bot active here → "AI is replying automatically" + [Take over]
  *   - bot paused here → the handoff note (if any) + [Resume AI]
- * Renders nothing when the account has no auto-reply configured, or when
- * the bot is active but a human already owns the thread (nothing to do).
+ * Qué aviso va lo decide `avisoDelChat`: el chat que calló el celular lo
+ * muestra aunque la cuenta no tenga el bot configurado o el chat esté
+ * asignado; sin celular, sin bot no hay aviso.
  */
 export function AiThreadBanner({
   conversationId,
@@ -128,98 +128,22 @@ export function AiThreadBanner({
     [conversationId, actualizadoEn, assignedAgentId, onChange, t],
   );
 
-  // Account has no auto-reply → nothing to show. (Still loading → nothing.)
-  if (!autoReplyOn) return null;
-
-  // Paused here (a human took over, or the model handed off).
-  if (paused) {
-    return (
-      <Banner tone="muted">
-        <div className="min-w-0 flex-1">
-          <p className="font-medium text-foreground">{t("pausedTitle")}</p>
-          {porCelular ? (
-            <p className="text-muted-foreground">
-              {textoCelular(t, ultimoEcoCelular, assignedAgentId, ahora)}
-            </p>
-          ) : (
-            handoffSummary && (
-              <p className="truncate text-muted-foreground" title={handoffSummary}>
-                {handoffSummary}
-              </p>
-            )
-          )}
-        </div>
-        <BannerButton onClick={() => toggle(false)} busy={busy} icon={Undo2}>
-          {t("resume")}
-        </BannerButton>
-      </Banner>
-    );
-  }
-
-  // Active, but a human already owns it → the bot won't fire; no banner.
-  if (assignedAgentId) return null;
-
-  // Active on this thread.
   return (
-    <Banner tone="primary">
-      <div className="flex min-w-0 flex-1 items-center gap-1.5">
-        <Sparkles className="h-3.5 w-3.5 flex-shrink-0 text-primary" />
-        <span className="truncate font-medium text-foreground">
-          {t("activeText")}
-        </span>
-      </div>
-      <BannerButton onClick={() => toggle(true)} busy={busy} icon={Hand}>
-        {t("takeOver")}
-      </BannerButton>
-    </Banner>
-  );
-}
-
-function Banner({
-  tone,
-  children,
-}: {
-  tone: "primary" | "muted";
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      className={cn(
-        "flex items-center gap-3 border-b px-3 py-2 text-xs sm:px-4",
-        tone === "primary"
-          ? "border-primary/20 bg-primary/5"
-          : "border-border bg-muted/40",
-      )}
-    >
-      {children}
-    </div>
-  );
-}
-
-function BannerButton({
-  onClick,
-  busy,
-  icon: Icon,
-  children,
-}: {
-  onClick: () => void;
-  busy: boolean;
-  icon: typeof Hand;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={busy}
-      className="inline-flex flex-shrink-0 items-center gap-1 rounded-md border border-border bg-card px-2.5 py-1 font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-60"
-    >
-      {busy ? (
-        <Loader2 className="h-3 w-3 animate-spin" />
-      ) : (
-        <Icon className="h-3 w-3" />
-      )}
-      {children}
-    </button>
+    <VistaAiBanner
+      aviso={avisoDelChat({
+        autoReplyOn,
+        pausado: paused,
+        porCelular,
+        asignado: assignedAgentId,
+      })}
+      t={t}
+      porCelular={porCelular}
+      handoffSummary={handoffSummary}
+      ultimoEcoCelular={ultimoEcoCelular}
+      assignedAgentId={assignedAgentId}
+      ahora={ahora}
+      busy={busy}
+      onToggle={toggle}
+    />
   );
 }
