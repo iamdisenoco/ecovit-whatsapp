@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { AuthProvider, useAuth } from "@/hooks/use-auth";
-import { urlIngresoEcovit } from "@/lib/ecovit/ingreso";
+import { urlSinSesion } from "@/lib/ecovit/ingreso";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { AccountAccessAlert } from "@/components/layout/account-access-alert";
@@ -24,10 +24,10 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
 
   useEffect(() => {
-    // Normalmente el middleware ya lo mandó a ECOVIT; esto cubre la sesión
+    // Normalmente el middleware ya lo mandó al ingreso; esto cubre la sesión
     // que se cierra con la pestaña abierta.
     if (!loading && !user) {
-      window.location.href = urlIngresoEcovit(window.location.href) ?? "/sin-sesion";
+      window.location.href = urlSinSesion(window.location.href);
     }
   }, [user, loading]);
 

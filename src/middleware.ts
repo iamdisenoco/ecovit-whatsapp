@@ -1,27 +1,30 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import { cookieOptions, supabaseKey, supabaseUrl } from '@/lib/supabase/config'
-import { rolTieneAcceso, urlIngresoEcovit } from '@/lib/ecovit/ingreso'
+import {
+  RUTA_INGRESO,
+  enLista,
+  rolTieneAcceso,
+  urlSinPerfil,
+  urlSinSesion,
+} from '@/lib/ecovit/ingreso'
 
 /**
- * ECOVIT · Conversaciones no tiene usuarios propios: entra quien tiene sesión
- * en ECOVIT (mismo proyecto de Supabase, misma cookie). Sin sesión, se manda a
- * la pantalla de ingreso de ECOVIT con `volver` apuntando acá. Con sesión, se
- * mira `perfiles` (la autoridad de ECOVIT): dado de baja o sin perfil vuelve a
- * ECOVIT, que lo explica; `administracion` no entra a la bandeja.
+ * ECOVIT · Conversaciones no tiene usuarios propios: entra quien tiene usuario
+ * en ECOVIT (mismo proyecto de Supabase). Sin sesión, con cookie compartida
+ * (`NEXT_PUBLIC_COOKIE_DOMAIN`) se manda al ingreso de ECOVIT; sin ella, a
+ * `/ingresar` de esta app (ver `lib/ecovit/ingreso.ts`). Con sesión, se mira
+ * `perfiles` (la autoridad de ECOVIT): dado de baja o sin perfil no entra;
+ * `administracion` no entra a la bandeja.
  *
  * Es una primera barrera: la de verdad son las políticas de la base.
  */
 
-/** Rutas sin sesión: las pantallas que explican por qué no se entra. */
-const SIN_SESION = ['/sin-sesion', '/sin-acceso']
+/** Rutas sin sesión: el ingreso propio y las pantallas que explican por qué no se entra. */
+const SIN_SESION = [RUTA_INGRESO, '/sin-sesion', '/sin-acceso']
 
 /** API que se cuidan solas (firma de Meta/Zernio, secreto del cron). */
 const API_PROPIAS = ['/api/whatsapp/webhook', '/api/whatsapp/meta/webhook', '/api/whatsapp/cron', '/api/automations/cron', '/api/flows/cron']
-
-/** Por SEGMENTO, no por prefijo de texto (regla de ECOVIT). */
-const enLista = (ruta: string, lista: string[]) =>
-  lista.some((p) => ruta === p || ruta.startsWith(`${p}/`))
 
 export async function middleware(request: NextRequest) {
   const ruta = request.nextUrl.pathname
@@ -69,8 +72,7 @@ export async function middleware(request: NextRequest) {
         NextResponse.json({ error: 'Sin sesión' }, { status: 401 })
       )
     }
-    const destino = urlIngresoEcovit(request.nextUrl.href)
-    const url = destino ? new URL(destino) : new URL('/sin-sesion', request.url)
+    const url = new URL(urlSinSesion(request.nextUrl.href), request.url)
     return withRefreshedCookies(NextResponse.redirect(url))
   }
 
@@ -85,14 +87,13 @@ export async function middleware(request: NextRequest) {
   if (error) return supabaseResponse
 
   if (!perfil || !perfil.activo) {
-    // ECOVIT cierra la sesión y dice por qué (baja o sin perfil).
+    // ECOVIT (o `/ingresar`, con sesión propia) cierra la sesión y dice por qué.
     if (esApi) {
       return withRefreshedCookies(
         NextResponse.json({ error: 'Sin acceso' }, { status: 403 })
       )
     }
-    const destino = urlIngresoEcovit()
-    const url = destino ? new URL(destino) : new URL('/sin-sesion', request.url)
+    const url = new URL(urlSinPerfil(), request.url)
     return withRefreshedCookies(NextResponse.redirect(url))
   }
 
