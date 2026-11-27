@@ -30,3 +30,28 @@ export function textoCelular(
   }
   return base;
 }
+
+/**
+ * Qué aviso lleva el chat arriba:
+ * - `nada`: sin bot y sin celular, o bot activo con el chat ya asignado.
+ * - `celular`: solo «Lo atiende una persona desde el celular», sin hora ni
+ *   botón. Va cuando el celular calló el chat y no hay bot que retomar (la
+ *   cuenta no lo tiene configurado, o todavía no se sabe), o cuando el chat
+ *   está asignado y el bot no corre igual.
+ * - `pausado`: bot configurado y en pausa aquí; con celular dice la hora.
+ * - `activo`: el bot contesta solo en este chat.
+ */
+export type AvisoChat = "nada" | "celular" | "pausado" | "activo";
+
+export function avisoDelChat(e: {
+  /** `null` mientras se lee la cuenta. */
+  autoReplyOn: boolean | null;
+  pausado: boolean;
+  porCelular: boolean;
+  asignado: string | null | undefined;
+}): AvisoChat {
+  if (!e.autoReplyOn) return e.porCelular ? "celular" : "nada";
+  if (e.pausado) return "pausado";
+  if (e.asignado) return e.porCelular ? "celular" : "nada";
+  return "activo";
+}
