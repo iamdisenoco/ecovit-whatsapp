@@ -87,10 +87,11 @@ export function nombreUtil(nombre: string | null | undefined): string | null {
  * se toca. Nunca un teléfono como nombre y nunca sobre uno que puso una persona
  * (`nombre_origen = 'persona'`). Se pone si el contacto no tiene un nombre de
  * verdad (vacío o el relleno del teléfono/BSUID) o —solo si el nombre nuevo
- * viene de la agenda— si el que tiene también lo puso la agenda: así un
- * renombre en el celular llega a la app (Jon, 28-nov). Un nombre de origen
- * desconocido (`null`) con letras no se toca. La usan el webhook, el historial y
- * `contact.updated`.
+ * viene de la agenda— si el que tiene lo puso la agenda o el servidor
+ * (`nombre_origen` 'agenda' o nulo): así el nombre guardado en el celular
+ * llega a la app (Jon, 28-nov). El nombre del perfil de un mensaje
+ * (`deLaAgenda = false`) solo llena un vacío. La usan el webhook, el historial
+ * y `contact.updated`.
  */
 export function nombreParaCompletar(
   existente: ContactoFila,
@@ -101,7 +102,13 @@ export function nombreParaCompletar(
   if (!nombre || nombre === existente.name) return null;
   if (existente.nombre_origen === 'persona') return null;
   if (sinNombre(existente)) return nombre;
-  return deLaAgenda && existente.nombre_origen === 'agenda' ? nombre : null;
+  // Nulo = no lo marcó el disparador: lo puso el servidor (en la práctica, el
+  // perfil de WhatsApp), nunca una persona después de la migración 132. Sin la
+  // columna (`undefined`) no se sabe y no se toca.
+  return deLaAgenda &&
+    (existente.nombre_origen === null || existente.nombre_origen === 'agenda')
+    ? nombre
+    : null;
 }
 
 /**
@@ -290,13 +297,11 @@ export async function completarNombresSupabase(
       const ahora = new Date().toISOString();
       let q = (
         conOrigen
-          ? db
-              .from('contacts')
-              .update({
-                name: nombre,
-                nombre_origen: 'agenda',
-                updated_at: ahora,
-              })
+          ? db.from('contacts').update({
+              name: nombre,
+              nombre_origen: 'agenda',
+              updated_at: ahora,
+            })
           : db.from('contacts').update({ name: nombre, updated_at: ahora })
       ).eq('id', existente.id);
       // Solo si sigue con el nombre (y el origen) que se leyó: no pisa lo

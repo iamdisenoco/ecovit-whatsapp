@@ -195,6 +195,8 @@ describe('historial, fase contactos: la regla del nombre', () => {
       { telefono: tel(0), nombre: 'Marta (obra 4)' },
       { telefono: tel(1), nombre: tel(1) },
     ]);
+    // Desde la migración 132, lo que escribe una persona queda 'persona'.
+    a.contactos[0].nombreOrigen = 'persona';
     const r = await importarHistorial({ ...base, almacen: a, fuente: z });
     expect(r.nombres).toBe(1);
     expect(a.contactos.map((c) => c.nombre)).toEqual([
@@ -250,6 +252,17 @@ describe('historial, fase contactos: el origen del nombre', () => {
       ['Puesto a mano', 'persona'],
       ['Nuevo 2', 'agenda'],
     ]);
+  });
+
+  it('el nombre de perfil (origen nulo, con letras) lo reemplaza la agenda', async () => {
+    const z = agenda(1, () => 'Ferretería Ruiz');
+    const a = almacen([{ telefono: tel(0), nombre: 'Juan Perfil' }]);
+    const r = await importarHistorial({ ...base, almacen: a, fuente: z });
+    expect(r.nombres).toBe(1);
+    expect(a.contactos[0]).toMatchObject({
+      nombre: 'Ferretería Ruiz',
+      nombreOrigen: 'agenda',
+    });
   });
 
   it('el nombre del perfil de WhatsApp (un mensaje) no pisa el de la agenda', () => {
@@ -578,6 +591,7 @@ describe('completarNombresSupabase', () => {
         id: 'c2',
         phone: '573004445566',
         name: 'Marta (obra 4)',
+        nombre_origen: 'persona',
         wa_user_id: null,
         wa_parent_user_id: null,
         wa_username: null,
@@ -725,7 +739,8 @@ describe('completarNombresSupabase: el origen del nombre (migración 132)', () =
       fila('c1', '573001110001', 'Ana vieja', 'agenda'),
       fila('c2', '573001110002', 'Beto (obra 4)', 'persona'),
       fila('c3', '573001110003', '573001110003', null),
-      // Con letras y origen desconocido: no se sabe quién lo puso, no se toca.
+      // Con letras y origen nulo: lo puso el servidor (el perfil de WhatsApp),
+      // no una persona. Jon quiere ver el nombre del celular: se reemplaza.
       fila('c4', '573001110004', 'Carla', null),
     ];
     const { db, llamadas } = dbDoble(filas);
@@ -735,12 +750,12 @@ describe('completarNombresSupabase: el origen del nombre (migración 132)', () =
       { telefono: '573001110003', nombre: 'Ceci' },
       { telefono: '573001110004', nombre: 'Carla de la agenda' },
     ]);
-    expect(n).toBe(2);
+    expect(n).toBe(3);
     expect(filas.map((f) => [f.name, f.nombre_origen])).toEqual([
       ['Ana nueva', 'agenda'],
       ['Beto (obra 4)', 'persona'],
       ['Ceci', 'agenda'],
-      ['Carla', null],
+      ['Carla de la agenda', 'agenda'],
     ]);
     // El update va condicionado también al origen leído.
     const u = llamadas.find((c) => c.some((x) => x.op === 'update'))!;

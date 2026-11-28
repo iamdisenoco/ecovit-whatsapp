@@ -120,7 +120,7 @@ describe('contact.updated por el webhook', () => {
 
   it('no pisa un nombre puesto a mano', async () => {
     const { almacen, deps } = armar(ANA, [
-      { telefono: TEL, nombre: 'Marta (obra 4)' },
+      { telefono: TEL, nombre: 'Marta (obra 4)', nombreOrigen: 'persona' },
     ]);
     const r = await manejarWebhook(
       pedido(contactoActualizado('e1', 'k1')),
@@ -226,6 +226,17 @@ describe('contact.updated por el webhook', () => {
       expect(almacen.contactos[0]).toMatchObject({
         nombre: 'Ana vieja',
         nombreOrigen: 'persona',
+      });
+    });
+
+    it('el nombre de perfil (origen nulo) lo reemplaza el del celular', async () => {
+      const { almacen, deps } = armar(ANA, [
+        { telefono: TEL, nombre: 'Juan Perfil', nombreOrigen: null },
+      ]);
+      await manejarWebhook(pedido(contactoActualizado('e1', 'k1')), deps);
+      expect(almacen.contactos[0]).toMatchObject({
+        nombre: 'Ana Ruiz',
+        nombreOrigen: 'agenda',
       });
     });
 

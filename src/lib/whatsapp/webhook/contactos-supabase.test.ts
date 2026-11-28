@@ -52,6 +52,15 @@ describe('cambiosDeContacto: el nombre', () => {
 });
 
 describe('cambiosDeContacto: el origen del nombre', () => {
+  it('el nombre del perfil tampoco pisa uno con letras de origen nulo', () => {
+    expect(
+      cambiosDeContacto(
+        { ...contacto('Juan Perfil'), nombre_origen: null },
+        identidad
+      ).name
+    ).toBeUndefined();
+  });
+
   it('el nombre del perfil (un mensaje) no pisa el que puso la agenda', () => {
     expect(
       cambiosDeContacto(
