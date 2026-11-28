@@ -452,7 +452,8 @@ export function esperaDe(h: Headers, ahora = Date.now()): number {
  * - `listas`: cuántos chats van en total (para el avance);
  * - `fase`: `chats` y después `contactos` (la agenda, para los nombres);
  * - `saltoContactos`: el `skip` de la próxima página de la agenda;
- * - `bajoAlguno`: si en esta corrida ya respondió bien algún archivo.
+ * - `bajoAlguno`: si en esta corrida ya respondió bien algún archivo o se
+ *   comprobó que la conexión sirve.
  */
 export interface EstadoImportacion {
   pagina: string | null;
@@ -997,25 +998,51 @@ export async function importarHistorial(
           await perdido(g.id, m.texto);
           break;
         case 'rechazado':
-          // Un 400 sin «venció» en el PRIMER archivo de la corrida puede ser
-          // un pedido mal armado: se corta con error en vez de dar todo por
-          // perdido. Después de uno que funcionó, queda pendiente.
-          if (!estado.bajoAlguno)
-            throw new ErrorHistorial(
-              `La conexión de WhatsApp rechazó el primer archivo (${bajada.http}). Se detuvo la importación sin marcar nada como perdido.`
-            );
-          r.adjuntosFallidos++;
+        case 'fallo': {
+          // 400/404 sin «venció», 401 o 403: ¿es el archivo o es la conexión?
+          const dudoso =
+            bajada.estado === 'rechazado' ||
+            bajada.http === 401 ||
+            bajada.http === 403;
+          if (!dudoso) {
+            r.adjuntosFallidos++;
+            break;
+          }
+          if (await conexionBuena(bajada.http)) await perdido(g.id, m.texto);
+          else r.adjuntosPendientes++;
           break;
-        case 'fallo':
-          // La llave no sirve: todos fallarían igual. Se corta con error.
-          if (bajada.http === 401 || bajada.http === 403)
-            throw new ErrorHistorial(
-              `La conexión de WhatsApp no dejó bajar los archivos (${bajada.http}).`
-            );
-          r.adjuntosFallidos++;
-          break;
+        }
       }
     }
     return salida;
+  }
+
+  /**
+   * Un archivo rechazado: ¿la conexión sirve? Si en esta corrida ya bajó
+   * alguno, sí. Si no, se prueba UNA vez con un pedido que se sabe bueno (la
+   * primera página de chats). Si ese también falla con 401/403, la llave no
+   * sirve: se corta con error, sin marcar nada. `false` = no se pudo saber
+   * (el proveedor pidió esperar): el archivo queda pendiente.
+   */
+  async function conexionBuena(http: number | null): Promise<boolean> {
+    if (estado.bajoAlguno) return true;
+    const prueba = await pedir(async () => {
+      try {
+        await o.fuente.conversaciones(o.cuentaId, null, 1);
+        return true;
+      } catch (err) {
+        if (err instanceof ErrorHistorial && /\((401|403)\)/.test(err.message))
+          return false;
+        throw err;
+      }
+    });
+    if (prueba === 'cortar') return false;
+    if (!prueba)
+      throw new ErrorHistorial(
+        `La conexión de WhatsApp no dejó bajar los archivos (${http ?? 'sin respuesta'}). Revise la llave de la conexión.`
+      );
+    // La conexión sirve: no se vuelve a probar en esta corrida.
+    estado.bajoAlguno = true;
+    return true;
   }
 }

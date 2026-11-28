@@ -42,6 +42,10 @@ class BandejaFalsa {
   media = new Map<string, number>();
   pedidosMedia: string[] = [];
   pedidosMensajes = 0;
+  pedidosChats = 0;
+  /** La llave deja de servir apenas se pide el primer archivo. */
+  llaveSeVence = false;
+  private llaveVencida = false;
   /** El cuerpo de un 400/404/410 por id (si no, el de la doc: «venció»). */
   cuerpoMedia = new Map<string, string>();
   /** El content-type que devuelve el servidor por id (si no, image/jpeg). */
@@ -75,8 +79,10 @@ class BandejaFalsa {
     }
     const url = new URL(entrada);
     const auth = (init?.headers as Record<string, string>)?.Authorization;
-    if (auth !== 'Bearer llave') return new Response('', { status: 401 });
+    if (auth !== 'Bearer llave' || this.llaveVencida)
+      return new Response('{"error":"invalid key"}', { status: 401 });
     const p = url.pathname;
+    if (p === '/api/v1/inbox/conversations') this.pedidosChats++;
     if (p === '/api/v1/inbox/conversations')
       return Response.json({ data: this.chats, pagination: {} });
     const enChat = /^\/api\/v1\/inbox\/conversations\/([^/]+)\/messages$/.exec(
@@ -92,6 +98,10 @@ class BandejaFalsa {
     const media = /^\/api\/v1\/whatsapp\/media\/(\w+)$/.exec(p);
     if (media) {
       this.pedidosMedia.push(media[1]);
+      if (this.llaveSeVence) {
+        this.llaveVencida = true;
+        return new Response('{"error":"invalid key"}', { status: 401 });
+      }
       this.reloj += this.tardaMedia;
       if (this.limitarMedia > 0) {
         this.limitarMedia--;
@@ -394,40 +404,43 @@ describe('historial: adjuntos', () => {
     expect(b.pedidosMedia.filter((x) => x === '86' || x === '87')).toEqual(['86']);
   });
 
-  it('un 400 sin «venció» en el primer archivo corta la corrida con error', async () => {
+  it('un archivo que siempre da 403 no bloquea dos corridas seguidas', async () => {
     const b = new BandejaFalsa();
     b.chat('c1', '573001112233');
     b.mensaje('c1', { id: 'w.1', createdAt: '2026-10-01T10:00:00Z', ...adjunto('91') });
-    b.media.set('91', 400);
-    b.cuerpoMedia.set('91', '{"error":"accountId is required"}');
+    b.mensaje('c1', { id: 'w.2', createdAt: '2026-10-01T10:01:00Z', ...adjunto('92') });
+    b.mensaje('c1', { id: 'w.3', createdAt: '2026-10-01T10:02:00Z', ...adjunto('93') });
+    b.media.set('91', 403);
+    b.media.set('92', 400);
+    b.cuerpoMedia.set('92', '{"error":"bad request"}');
     const a = almacen();
-    await expect(importar(a, b)).rejects.toThrow(/rechazó el primer archivo \(400\)/);
-    // No marcó nada como perdido.
-    expect(msj(a, 'w.1')).toMatchObject({ content_text: TEXTO_ADJUNTO, media_url: null });
-  });
-
-  it('testigo: el mismo 400 después de uno que bajó queda pendiente', async () => {
-    const b = new BandejaFalsa();
-    b.chat('c1', '573001112233');
-    b.mensaje('c1', { id: 'w.0', createdAt: '2026-10-01T09:00:00Z', ...adjunto('90') });
-    b.mensaje('c1', { id: 'w.1', createdAt: '2026-10-01T10:00:00Z', ...adjunto('91') });
-    b.media.set('91', 400);
-    b.cuerpoMedia.set('91', '{"error":"accountId is required"}');
-    const a = almacen();
+    const chatsAntes = b.pedidosChats;
     const [r] = await importar(a, b);
+    // Testigo: se comprobó la conexión, una sola vez en la corrida.
+    expect(b.pedidosChats - chatsAntes).toBe(2); // la lista + la comprobación
+    expect(r.adjuntosVencidos).toBe(2);
     expect(r.adjuntosBajados).toBe(1);
-    expect(r.adjuntosFallidos).toBe(1);
-    expect(msj(a, 'w.1')).toMatchObject({ content_text: TEXTO_ADJUNTO, media_url: null });
+    expect(msj(a, 'w.1')?.content_text).toBe(ADJUNTO_SIN_DESCARGAR);
+    expect(msj(a, 'w.2')?.content_text).toBe(ADJUNTO_SIN_DESCARGAR);
+    // La segunda corrida termina y no vuelve a pedirlos.
+    const tramos = await importar(a, b);
+    expect(tramos.at(-1)!.terminado).toBe(true);
+    expect(b.pedidosMedia.filter((x) => x === '91' || x === '92')).toEqual(['91', '92']);
   });
 
-  it('un 401 corta la corrida con error (la llave no sirve para ninguno)', async () => {
+  it('una llave mala corta con error y no marca nada', async () => {
     const b = new BandejaFalsa();
     b.chat('c1', '573001112233');
-    b.mensaje('c1', { id: 'w.1', createdAt: '2026-10-01T10:00:00Z', ...adjunto('92') });
-    b.media.set('92', 401);
+    b.mensaje('c1', { id: 'w.1', createdAt: '2026-10-01T10:00:00Z', ...adjunto('94') });
+    b.mensaje('c1', { id: 'w.2', createdAt: '2026-10-01T10:01:00Z', ...adjunto('95') });
+    b.llaveSeVence = true;
     const a = almacen();
-    await expect(importar(a, b)).rejects.toThrow(/no dejó bajar los archivos \(401\)/);
-    expect(msj(a, 'w.1')?.content_text).toBe(TEXTO_ADJUNTO);
+    await expect(importar(a, b)).rejects.toThrow(
+      /no dejó bajar los archivos \(401\)/
+    );
+    expect(msj(a, 'w.1')).toMatchObject({ content_text: TEXTO_ADJUNTO, media_url: null });
+    expect(msj(a, 'w.2')).toMatchObject({ content_text: TEXTO_ADJUNTO, media_url: null });
+    expect(b.pedidosMedia).toEqual(['94']);
   });
 
   it('si anotar el adjunto en el mensaje falla, no cuenta como bajado', async () => {
