@@ -386,8 +386,14 @@ function dbDoble(filas: Array<Record<string, unknown>>) {
           return q;
         };
       q.then = (ok: (v: unknown) => unknown) => {
-        if (!esUpdate)
-          return Promise.resolve({ data: filas, error: null }).then(ok);
+        if (!esUpdate) {
+          // Como la base: solo las filas cuyo `phone_normalized` está en el in().
+          const en = cadena.find((c) => c.op === 'in')?.args[1] as string[];
+          const data = filas.filter((f) =>
+            (en ?? []).includes(String(f.phone).replace(/\D/g, ''))
+          );
+          return Promise.resolve({ data, error: null }).then(ok);
+        }
         // El update condicional: solo «cambia» si el nombre leído sigue igual.
         const id = cadena.find((c) => c.op === 'eq' && c.args[0] === 'id')
           ?.args[1];
@@ -407,6 +413,41 @@ function dbDoble(filas: Array<Record<string, unknown>>) {
   };
   return { db, llamadas };
 }
+
+describe('de punta a punta: del JSON del proveedor al contacto de la app', () => {
+  it('cruza el `platformIdentifier` en E.164 con el teléfono en dígitos de la app', async () => {
+    const respuestas = [
+      () =>
+        Response.json({
+          data: [],
+          pagination: { hasMore: false, nextCursor: null },
+        }),
+      () =>
+        Response.json({
+          contacts: [
+            {
+              id: 'k1',
+              name: 'Doña Marta',
+              platform: 'whatsapp',
+              platformIdentifier: '+573001112233',
+              displayIdentifier: '+573001112233 (+573001112233)',
+            },
+          ],
+          pagination: { total: 1, limit: 100, skip: 0, hasMore: false },
+        }),
+    ];
+    const f = (async () => respuestas.shift()!()) as unknown as typeof fetch;
+    const a = almacen([{ telefono: '573001112233', nombre: '573001112233' }]);
+    const r = await importarHistorial({
+      ...base,
+      almacen: a,
+      fuente: new FuenteHistorialZernio({ apiKey: 'k', fetch: f }),
+    });
+    expect(r.terminado).toBe(true);
+    expect(r.nombres).toBe(1);
+    expect(a.contactos[0].nombre).toBe('Doña Marta');
+  });
+});
 
 describe('completarNombresSupabase', () => {
   it('solo escribe el nombre, condicionado al que leyó, y no toca a quien tiene uno', async () => {
