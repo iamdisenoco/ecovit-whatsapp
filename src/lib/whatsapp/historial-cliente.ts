@@ -56,7 +56,7 @@ export const textoNombres = (n: number) =>
 
 /** «Listo: N chats revisados, M mensajes nuevos y K nombres de contactos.» */
 export function textoListo(listas: number, nuevos: number, nombres: number) {
-  return `Listo: ${textoChats(listas)} revisados, ${textoMensajes(nuevos)} y ${textoNombres(nombres)}.`;
+  return `Listo: ${textoChats(listas)} ${listas === 1 ? 'revisado' : 'revisados'}, ${textoMensajes(nuevos)} y ${textoNombres(nombres)}.`;
 }
 
 export async function correrImportacion(

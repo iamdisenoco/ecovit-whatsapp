@@ -146,7 +146,9 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
       if (!digitos) continue;
       const c =
         this.contactos.find((x) => x.telefono === digitos) ??
-        this.contactos.find((x) => x.telefono && phonesMatch(x.telefono, digitos));
+        this.contactos.find(
+          (x) => x.telefono && phonesMatch(x.telefono, digitos)
+        );
       if (!c) continue;
       const nombre = nombreParaCompletar(
         {

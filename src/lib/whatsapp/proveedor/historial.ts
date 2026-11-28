@@ -238,9 +238,7 @@ export interface ConfigFuenteZernio {
 }
 
 /** La lectura de la bandeja de Zernio. SOLO GET. */
-export class FuenteHistorialZernio
-  implements FuenteHistorial, LectorContactos
-{
+export class FuenteHistorialZernio implements FuenteHistorial, LectorContactos {
   private readonly base: string;
   private readonly f: typeof fetch;
   private readonly timeoutMs: number;
@@ -644,7 +642,11 @@ export async function importarHistorial(
     for (;;) {
       if (queda() <= 0) return cortar();
       const pagina = await pedir(() =>
-        o.fuente.contactos(o.cuentaId, estado.saltoContactos, contactosPorPagina)
+        o.fuente.contactos(
+          o.cuentaId,
+          estado.saltoContactos,
+          contactosPorPagina
+        )
       );
       if (pagina === 'cortar') return cortar();
       r.contactosLeidos += pagina.items.length;

@@ -213,7 +213,9 @@ export async function completarNombresSupabase(
   let completados = 0;
   for (let i = 0; i < utiles.length; i += TELEFONOS_POR_CONSULTA) {
     const tramo = utiles.slice(i, i + TELEFONOS_POR_CONSULTA);
-    const variantes = [...new Set(tramo.flatMap((p) => phoneVariants(p.telefono)))];
+    const variantes = [
+      ...new Set(tramo.flatMap((p) => phoneVariants(p.telefono))),
+    ];
     const { data, error } = await db
       .from('contacts')
       .select(COLUMNAS_CONTACTO)
@@ -237,7 +239,10 @@ export async function completarNombresSupabase(
         .update({ name: nombre, updated_at: new Date().toISOString() })
         .eq('id', existente.id);
       // Solo si sigue con el nombre que se leyó: no pisa lo escrito en el medio.
-      q = existente.name === null ? q.is('name', null) : q.eq('name', existente.name);
+      q =
+        existente.name === null
+          ? q.is('name', null)
+          : q.eq('name', existente.name);
       const { data: cambiados, error: errUpd } = await q.select('id');
       if (errUpd) {
         console.error(
