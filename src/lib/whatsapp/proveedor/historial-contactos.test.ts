@@ -8,6 +8,7 @@ import {
   nombreUtil,
 } from '../webhook/contactos-supabase';
 import type { Inquilino } from '../webhook/almacen';
+import { telefonoCrudo } from './zernio-webhook';
 import {
   CONTACTOS_POR_PAGINA,
   FuenteHistorialZernio,
@@ -333,6 +334,47 @@ describe('FuenteHistorialZernio: la agenda', () => {
     expect(pedidos.every((p) => p.metodo === 'GET')).toBe(true);
   });
 
+  it('un BSUID con letras y dígitos no se vuelve teléfono', async () => {
+    const { f } = fetchDoble([
+      () =>
+        Response.json({
+          contacts: [
+            {
+              id: 'k1',
+              name: 'Ana',
+              platform: 'whatsapp',
+              platformIdentifier: 'CO.1A2B3C4D5E6F7',
+            },
+            {
+              id: 'k2',
+              name: 'Beto',
+              platform: 'whatsapp',
+              platformIdentifier: '+573001112233',
+            },
+          ],
+          pagination: { hasMore: false },
+        }),
+      () =>
+        Response.json({
+          contact: { id: 'k1', name: 'Ana' },
+          channels: [
+            {
+              accountId: 'acc',
+              platform: 'whatsapp',
+              platformIdentifier: 'CO.1A2B3C4D5E6F7',
+            },
+          ],
+        }),
+    ]);
+    const fuente = new FuenteHistorialZernio({ apiKey: 'k', fetch: f });
+    const p = await fuente.contactos('acc', 0, 100);
+    expect(p.items.map((c) => c.telefono)).toEqual([null, '573001112233']);
+    expect((await fuente.contacto('k1', 'acc'))?.telefono).toBeNull();
+    expect(
+      telefonoCrudo('CO.1A2B3C4D5E6F7') ?? telefonoCrudo('+57 300 111 2233')
+    ).toBeNull();
+  });
+
   it('un contacto: el teléfono del canal de ESA cuenta; 404 es null; 429 avisa', async () => {
     const { f, pedidos } = fetchDoble([
       () =>
@@ -401,8 +443,15 @@ function dbDoble(filas: Array<Record<string, unknown>>) {
         const cond = cadena.find(
           (c) => (c.op === 'eq' || c.op === 'is') && c.args[0] === 'name'
         );
+        // Como PostgREST: la condición sobre `name` filtra de verdad; sin
+        // ella el update pisa lo que haya.
         const vigente =
-          fila && cond && (cond.args[1] ?? null) === (fila.name ?? null);
+          !!fila && (!cond || (cond.args[1] ?? null) === (fila.name ?? null));
+        if (vigente) {
+          const cambios = cadena.find((c) => c.op === 'update')!
+            .args[0] as Record<string, unknown>;
+          Object.assign(fila, cambios);
+        }
         return Promise.resolve({
           data: vigente ? [{ id }] : [],
           error: null,
@@ -516,6 +565,52 @@ describe('completarNombresSupabase', () => {
       { telefono: '573001112233', nombre: 'Ana' },
     ]);
     expect(n).toBe(0);
+    expect(filas[0].name).toBe('Puesto a mano');
+  });
+
+  it('con el nombre en null: condiciona con is(name, null) y respeta la carrera', async () => {
+    const fila = () => ({
+      id: 'c1',
+      phone: '573001112233',
+      name: null as string | null,
+      wa_user_id: null,
+      wa_parent_user_id: null,
+      wa_username: null,
+    });
+    // Sin carrera: lo pone, condicionado a que siga en null.
+    const libre = [fila()];
+    const d1 = dbDoble(libre);
+    expect(
+      await completarNombresSupabase(d1.db as never, INQ, [
+        { telefono: '573001112233', nombre: 'Ana' },
+      ])
+    ).toBe(1);
+    expect(libre[0].name).toBe('Ana');
+    expect(d1.llamadas.flat()).toContainEqual({
+      op: 'is',
+      args: ['name', null],
+    });
+
+    // Con carrera: alguien lo escribió entre la lectura y el update.
+    const filas = [fila()];
+    const { db } = dbDoble(filas);
+    const original = db.from.bind(db);
+    let lecturas = 0;
+    db.from = (t: string) => {
+      const q = original(t) as Record<string, (...a: unknown[]) => unknown>;
+      const select = q.select;
+      q.select = (...a: unknown[]) => {
+        if (++lecturas === 2) filas[0].name = 'Puesto a mano';
+        return select(...a);
+      };
+      return q;
+    };
+    expect(
+      await completarNombresSupabase(db as never, INQ, [
+        { telefono: '573001112233', nombre: 'Ana' },
+      ])
+    ).toBe(0);
+    expect(filas[0].name).toBe('Puesto a mano');
   });
 
   it('parte el in() en tramos de a lo sumo 25 teléfonos', async () => {
