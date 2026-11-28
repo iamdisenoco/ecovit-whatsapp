@@ -9,8 +9,10 @@
 // (índice único `conversation_id, message_id`).
 // ============================================================
 
+import type { LectorContactos } from '../proveedor/historial';
 import type {
   AdjuntoEntrante,
+  EventoContactoActualizado,
   EventoMensajeEntrante,
   EventoMensajeEnviado,
   EventoWhatsApp,
@@ -33,6 +35,7 @@ import {
   entrantePuedeDespertarAlBot,
   puedeVolverPorCelular,
 } from './coexistencia';
+import { nombreUtil } from './contactos-supabase';
 
 /** Texto que queda en el chat mientras el adjunto no se haya bajado. */
 export const ADJUNTO_SIN_DESCARGAR = 'Adjunto recibido, sin descargar';
@@ -149,11 +152,21 @@ export async function chatDeMensaje(
   };
 }
 
+/** Para `contact.updated`: cómo leer un contacto y cuál es la cuenta propia. */
+export interface OpcionesProcesador {
+  contactos?: LectorContactos | null;
+  /** La cuenta conectada del número: un aviso de otra cuenta no se aplica. */
+  cuentaId?: string | null;
+}
+
 export class Procesador {
   private inquilino: Inquilino | null = null;
   private avisoSinConexion = false;
 
-  constructor(private readonly almacen: AlmacenWhatsApp) {}
+  constructor(
+    private readonly almacen: AlmacenWhatsApp,
+    private readonly opciones: OpcionesProcesador = {}
+  ) {}
 
   private async elInquilino(): Promise<Inquilino> {
     this.inquilino ??= await this.almacen.resolverInquilino();
@@ -214,6 +227,8 @@ export class Procesador {
               : null,
           statusAt: evento.ocurridoEn,
         });
+      } else if (evento.tipo === 'contacto_actualizado') {
+        if (!(await this.contactoActualizado(evento))) resultado.ignorados++;
       } else if (evento.tipo === 'mensaje_entrante') {
         const nuevo = await this.entrante(
           evento,
@@ -233,6 +248,42 @@ export class Procesador {
       resultado.procesados++;
     }
     return resultado;
+  }
+
+  /**
+   * La agenda del celular cambió un contacto: se lee su nombre y se aplica la
+   * regla única (`nombreParaCompletar`): solo si el de la app está vacío o es el
+   * relleno; nunca pisa uno puesto a mano y nunca crea un contacto. Si leerlo
+   * falla, lanza: el evento queda sin cerrar y el proveedor reintenta.
+   * `false` si no había nada que hacer con él (se cuenta como ignorado).
+   */
+  private async contactoActualizado(
+    evento: EventoContactoActualizado
+  ): Promise<boolean> {
+    const lector = this.opciones.contactos;
+    if (!lector) {
+      console.warn(
+        `[webhook] contact.updated ${evento.contactoId}: sin lector de contactos configurado; se ignora`
+      );
+      return false;
+    }
+    const propia = this.opciones.cuentaId ?? null;
+    if (propia && evento.cuentaId && evento.cuentaId !== propia) return false;
+    const contacto = await lector.contacto(
+      evento.contactoId,
+      propia ?? evento.cuentaId
+    );
+    const nombre = nombreUtil(contacto?.nombre);
+    if (!contacto?.telefono || !nombre) return false;
+    const inq = await this.elInquilino();
+    const n = await this.almacen.completarNombres(inq, [
+      { telefono: contacto.telefono, nombre },
+    ]);
+    if (n > 0)
+      console.info(
+        `[webhook] contact.updated ${evento.contactoId}: nombre completado`
+      );
+    return true;
   }
 
   private chatDe(

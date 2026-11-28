@@ -15,7 +15,7 @@ import { AlmacenSupabase } from '@/lib/whatsapp/webhook/almacen-supabase';
  * POST /api/whatsapp/historial  (solo la dirección)
  *
  * Trae un tramo de la historia de la coexistencia (`proveedor/historial.ts`).
- * Recibe `{ cursor? }` y devuelve `{ procesadas, mensajes, listas, cursor,
+ * Recibe `{ cursor? }` y devuelve `{ procesadas, mensajes, listas, nombres, cursor,
  * terminado, esperarMs }`; el botón de Configuración la llama en bucle hasta
  * `terminado`. Es idempotente: se puede volver a correr cuando se quiera.
  *

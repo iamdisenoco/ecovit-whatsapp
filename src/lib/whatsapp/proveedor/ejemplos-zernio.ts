@@ -1,7 +1,7 @@
 // ============================================================
 // Cuerpos de ejemplo de los webhooks de Zernio, armados SOLO con los campos que
 // documentan sus páginas (webhooks, inbox/message-received, message-sent,
-// message-delivered, message-read, message-failed). El de `webhook.test` es el
+// message-delivered, message-read, message-failed, contact-updated). El de `webhook.test` es el
 // de la documentación, tal cual. Los usan las pruebas y
 // `scripts/simular-zernio.mts`, así que este archivo no importa nada.
 // ============================================================
@@ -162,5 +162,65 @@ export function cuentaDesconectada(id: string) {
     event: 'account.disconnected',
     account: cuenta(),
     timestamp: '2026-11-20T16:00:00Z',
+  };
+}
+
+/**
+ * `contact.updated` (docs.zernio.com/webhooks/inbox/contact-updated): solo trae
+ * el id del contacto y `changeType`; el nombre se lee con `GET /v1/contacts/{id}`.
+ */
+export function contactoActualizado(
+  id: string,
+  contactoId: string,
+  o: { changeType?: 'updated' | 'deleted'; platform?: string } = {}
+) {
+  return {
+    id,
+    event: 'contact.updated',
+    account: {
+      ...cuenta(),
+      profileId: '66a1f0c2a4b9d3e8f1a2b3c4',
+      platform: o.platform ?? 'whatsapp',
+      username: '+573001234567',
+      displayName: 'ECOVIT',
+    },
+    contact: { id: contactoId, changeType: o.changeType ?? 'updated' },
+    timestamp: '2026-11-20T16:30:00Z',
+  };
+}
+
+/** La respuesta de `GET /v1/contacts/{id}` (forma medida el 28-nov). */
+export function respuestaContacto(
+  contactoId: string,
+  nombre: string,
+  telefonoE164: string,
+  accountId = CUENTA_EJEMPLO
+) {
+  return {
+    success: true,
+    contact: {
+      id: contactoId,
+      name: nombre,
+      email: null,
+      company: null,
+      tags: [],
+      isSubscribed: true,
+      isBlocked: false,
+      customFields: {},
+      notes: null,
+      createdAt: '2026-11-20T16:00:00Z',
+      updatedAt: '2026-11-20T16:30:00Z',
+    },
+    channels: [
+      {
+        id: `canal-${contactoId}`,
+        accountId,
+        platform: 'whatsapp',
+        platformIdentifier: telefonoE164,
+        displayIdentifier: `${telefonoE164} (${telefonoE164})`,
+        isSubscribed: true,
+        conversationId: null,
+      },
+    ],
   };
 }

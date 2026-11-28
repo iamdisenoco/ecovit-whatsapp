@@ -11,6 +11,8 @@ export interface TramoHistorial {
   procesadas: number;
   mensajes: number;
   listas: number;
+  /** Nombres de contactos completados en el tramo (falta en un servidor viejo). */
+  nombres?: number;
   cursor: string | null;
   terminado: boolean;
   esperarMs: number | null;
@@ -19,6 +21,7 @@ export interface TramoHistorial {
 export interface Avance {
   listas: number;
   nuevos: number;
+  nombres: number;
   esperando: boolean;
 }
 
@@ -33,14 +36,28 @@ export interface DependenciasImportacion {
 }
 
 export type FinImportacion =
-  | { ok: true; listas: number; nuevos: number }
+  | { ok: true; listas: number; nuevos: number; nombres: number }
   | {
       ok: false;
       error: string;
       cursor: string | null;
       listas: number;
       nuevos: number;
+      nombres: number;
     };
+
+const numero = (n: number) => n.toLocaleString('es-CO');
+export const textoChats = (n: number) =>
+  `${numero(n)} ${n === 1 ? 'chat' : 'chats'}`;
+export const textoMensajes = (n: number) =>
+  `${numero(n)} ${n === 1 ? 'mensaje nuevo' : 'mensajes nuevos'}`;
+export const textoNombres = (n: number) =>
+  `${numero(n)} ${n === 1 ? 'nombre de contacto' : 'nombres de contactos'}`;
+
+/** «Listo: N chats revisados, M mensajes nuevos y K nombres de contactos.» */
+export function textoListo(listas: number, nuevos: number, nombres: number) {
+  return `Listo: ${textoChats(listas)} ${listas === 1 ? 'revisado' : 'revisados'}, ${textoMensajes(nuevos)} y ${textoNombres(nombres)}.`;
+}
 
 export async function correrImportacion(
   desde: string | null,
@@ -51,23 +68,25 @@ export async function correrImportacion(
     ((ms: number) => new Promise<void>((ok) => setTimeout(ok, ms)));
   let cursor = desde;
   let nuevos = 0;
+  let nombres = 0;
   let listas = 0;
   try {
     for (let i = 0; i < (d.maxTramos ?? 2000); i++) {
       const t = await d.pedirTramo(cursor);
       nuevos += t.mensajes;
+      nombres += t.nombres ?? 0;
       listas = t.listas;
       if (t.terminado) {
         d.guardarCursor(null);
-        return { ok: true, listas, nuevos };
+        return { ok: true, listas, nuevos, nombres };
       }
       cursor = t.cursor;
       d.guardarCursor(cursor);
       if (t.esperarMs) {
-        d.alAvanzar({ listas, nuevos, esperando: true });
+        d.alAvanzar({ listas, nuevos, nombres, esperando: true });
         await esperar(t.esperarMs);
       }
-      d.alAvanzar({ listas, nuevos, esperando: false });
+      d.alAvanzar({ listas, nuevos, nombres, esperando: false });
     }
     throw new Error('Se detuvo antes de terminar.');
   } catch (e) {
@@ -77,6 +96,7 @@ export async function correrImportacion(
       cursor,
       listas,
       nuevos,
+      nombres,
     };
   }
 }

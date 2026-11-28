@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { correrImportacion, type TramoHistorial } from './historial-cliente';
+import {
+  correrImportacion,
+  textoListo,
+  type TramoHistorial,
+} from './historial-cliente';
 
 const tramo = (n: number, fin = false): TramoHistorial => ({
   procesadas: 1,
@@ -39,6 +43,24 @@ describe('correrImportacion', () => {
     expect(pedidos).toEqual(['c2']);
     // Al terminar no queda nada que seguir.
     expect(guardados.at(-1)).toBeNull();
+  });
+
+  it('suma los nombres de contactos y lo dice en palabras simples', async () => {
+    const r = await correrImportacion(null, {
+      pedirTramo: async (c) =>
+        c === null
+          ? { ...tramo(1), nombres: 4 }
+          : { ...tramo(2, true), nombres: 3 },
+      guardarCursor: () => {},
+      alAvanzar: () => {},
+    });
+    expect(r).toMatchObject({ ok: true, listas: 2, nuevos: 20, nombres: 7 });
+    expect(textoListo(2, 20, 7)).toBe(
+      'Listo: 2 chats revisados, 20 mensajes nuevos y 7 nombres de contactos.'
+    );
+    expect(textoListo(1, 1, 1)).toBe(
+      'Listo: 1 chat revisado, 1 mensaje nuevo y 1 nombre de contacto.'
+    );
   });
 
   it('respeta la espera que pide el servidor', async () => {

@@ -11,6 +11,10 @@ import { History, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   correrImportacion,
+  textoChats as chats,
+  textoListo,
+  textoMensajes as mensajes,
+  textoNombres,
   type TramoHistorial,
 } from '@/lib/whatsapp/historial-cliente';
 
@@ -32,11 +36,6 @@ function guardar(cursor: string | null) {
     /* sin almacenamiento: queda en el estado de la pantalla */
   }
 }
-
-const numero = (n: number) => n.toLocaleString('es-CO');
-const chats = (n: number) => `${numero(n)} ${n === 1 ? 'chat' : 'chats'}`;
-const mensajes = (n: number) =>
-  `${numero(n)} ${n === 1 ? 'mensaje nuevo' : 'mensajes nuevos'}`;
 
 async function pedirTramo(cursor: string | null): Promise<TramoHistorial> {
   const r = await fetch('/api/whatsapp/historial', {
@@ -72,17 +71,15 @@ export function ImportarHistorial() {
         setPendiente(c);
         guardar(c);
       },
-      alAvanzar: ({ listas, nuevos, esperando }) =>
+      alAvanzar: ({ listas, nuevos, nombres, esperando }) =>
         setAvance(
           esperando
             ? `${chats(listas)} hasta ahora. Esperando un momento…`
-            : `${chats(listas)} hasta ahora, ${mensajes(nuevos)}…`
+            : `${chats(listas)} hasta ahora, ${mensajes(nuevos)}${nombres > 0 ? `, ${textoNombres(nombres)}` : ''}…`
         ),
     });
     if (fin.ok) {
-      setAvance(
-        `Listo: ${chats(fin.listas)} revisados y ${mensajes(fin.nuevos)}.`
-      );
+      setAvance(textoListo(fin.listas, fin.nuevos, fin.nombres));
     } else {
       setError(
         `${fin.error} Lo que ya entró se conserva${fin.cursor ? ': puede seguir desde donde quedó.' : '.'}`
@@ -99,7 +96,8 @@ export function ImportarHistorial() {
         </p>
         <p className="text-muted-foreground text-sm">
           Trae a la bandeja las conversaciones que el número ya tenía antes de
-          conectarlo. Se puede repetir sin que se dupliquen.
+          conectarlo, y los nombres que tienen sus contactos en el celular. Se
+          puede repetir sin que se dupliquen.
         </p>
         {avance ? (
           <p className="text-foreground mt-2 text-sm" aria-live="polite">

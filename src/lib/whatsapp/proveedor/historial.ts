@@ -18,6 +18,12 @@
 // - un chat que crea la historia nace cerrado (no queda «esperando respuesta»);
 //   uno que ya existía no se toca, y uno sin mensajes importables no se crea.
 //
+// Después de los chats viene la fase de los contactos: recorre la agenda del
+// número (`GET /v1/contacts`, que en coexistencia trae los contactos de la app
+// del celular) y les pone el nombre a los contactos de la app que YA existen,
+// cruzando por teléfono, con la regla única `nombreParaCompletar`. No crea
+// contactos para quien no tiene chat ni pisa un nombre puesto a mano.
+//
 // Va por tramos (Vercel corta a los 60 s): cada llamada procesa hasta
 // `maxConversaciones` chats o hasta `presupuestoMs`, y devuelve un cursor
 // opaco para seguir. Es reanudable e idempotente.
@@ -28,8 +34,9 @@ import type {
   ContentType,
   MensajeNuevo,
 } from '../webhook/almacen';
+import { nombreUtil } from '../webhook/contactos-supabase';
 import { chatDeMensaje, resumen } from '../webhook/procesar';
-import { obj, str, type Obj } from './zernio-webhook';
+import { obj, str, telefonoCrudo, type Obj } from './zernio-webhook';
 import { ZERNIO_URL_BASE } from './zernio';
 import type { IdentidadRemitente } from './tipos';
 
@@ -40,6 +47,8 @@ export const MENSAJES_POR_PAGINA = 100;
 /** Vercel corta a los 60 s: se deja margen para guardar y responder. */
 export const PRESUPUESTO_MS = 25_000;
 export const MAX_CONVERSACIONES_POR_TRAMO = 10;
+/** El máximo que documenta `GET /v1/contacts`. */
+export const CONTACTOS_POR_PAGINA = 100;
 
 // ── Lo que se lee de Zernio ─────────────────────────────────────────────
 
@@ -62,6 +71,19 @@ export interface MensajeRemoto {
   borrado: boolean;
 }
 
+/** Un contacto de la agenda del número. `telefono` en dígitos, sin «+». */
+export interface ContactoRemoto {
+  id: string;
+  nombre: string | null;
+  telefono: string | null;
+}
+
+/** La agenda se pagina por posición (`skip`): `siguiente` es el próximo `skip`. */
+export interface PaginaContactos {
+  items: ContactoRemoto[];
+  siguiente: number | null;
+}
+
 export interface Pagina<T> {
   items: T[];
   siguiente: string | null;
@@ -80,6 +102,18 @@ export interface FuenteHistorial {
     cursor: string | null,
     limite: number
   ): Promise<Pagina<MensajeRemoto>>;
+  /** La agenda del número (los contactos de WhatsApp de esa cuenta). */
+  contactos(
+    cuentaId: string,
+    salto: number,
+    limite: number
+  ): Promise<PaginaContactos>;
+}
+
+/** Leer UN contacto de la agenda (el webhook `contact.updated`). Solo lectura. */
+export interface LectorContactos {
+  /** `null` si el proveedor ya no lo tiene (404). */
+  contacto(id: string, cuentaId: string | null): Promise<ContactoRemoto | null>;
 }
 
 /** 429: hay que esperar `esperaMs` antes de volver a pedir. */
@@ -145,6 +179,49 @@ function leerMensaje(crudo: unknown): MensajeRemoto | null {
   };
 }
 
+/** La misma regla del webhook: el valor crudo tiene que ser un teléfono. */
+const telefonoDe = telefonoCrudo;
+
+/** Un elemento de `GET /v1/contacts` (la lista ya viene filtrada por cuenta). */
+export function leerContactoDeLista(crudo: unknown): ContactoRemoto | null {
+  const c = obj(crudo);
+  const id = str(c.id);
+  if (!id) return null;
+  const plataforma = str(c.platform);
+  return {
+    id,
+    nombre: str(c.name)?.trim() ?? null,
+    telefono:
+      plataforma && plataforma !== 'whatsapp'
+        ? null
+        : telefonoDe(c.platformIdentifier),
+  };
+}
+
+/**
+ * `GET /v1/contacts/{id}`: `{ contact: { id, name }, channels: [...] }`. El
+ * teléfono es el `platformIdentifier` del canal de WhatsApp de ESTA cuenta.
+ */
+export function leerContactoUno(
+  json: Obj,
+  cuentaId: string | null
+): ContactoRemoto | null {
+  const c = obj(json.contact);
+  const id = str(c.id);
+  if (!id) return null;
+  const canales = Array.isArray(json.channels) ? json.channels.map(obj) : [];
+  const canal = canales.find(
+    (x) =>
+      str(x.platform) === 'whatsapp' &&
+      (!cuentaId || str(x.accountId) === cuentaId)
+  );
+  return {
+    id,
+    nombre: str(c.name)?.trim() ?? null,
+    telefono: canal ? telefonoDe(canal.platformIdentifier) : null,
+  };
+}
+
 function siguienteDe(json: Obj): string | null {
   const p = obj(json.pagination);
   return p.hasMore === true ? str(p.nextCursor) : null;
@@ -158,7 +235,7 @@ export interface ConfigFuenteZernio {
 }
 
 /** La lectura de la bandeja de Zernio. SOLO GET. */
-export class FuenteHistorialZernio implements FuenteHistorial {
+export class FuenteHistorialZernio implements FuenteHistorial, LectorContactos {
   private readonly base: string;
   private readonly f: typeof fetch;
   private readonly timeoutMs: number;
@@ -169,7 +246,11 @@ export class FuenteHistorialZernio implements FuenteHistorial {
     this.timeoutMs = config.timeoutMs ?? 15_000;
   }
 
-  private async get(ruta: string, params: Record<string, string | null>) {
+  private async get(
+    ruta: string,
+    params: Record<string, string | null>,
+    nuloSi404 = false
+  ): Promise<Obj | null> {
     const url = new URL(`${this.base}${ruta}`);
     for (const [k, v] of Object.entries(params))
       if (v !== null) url.searchParams.set(k, v);
@@ -188,6 +269,7 @@ export class FuenteHistorialZernio implements FuenteHistorial {
       throw new LimiteDeVelocidad(esperaDe(r.headers));
     }
     const texto = await r.text().catch(() => '');
+    if (r.status === 404 && nuloSi404) return null;
     if (!r.ok) {
       console.error(
         `[historial] zernio respondió ${r.status} en ${ruta}:`,
@@ -211,11 +293,11 @@ export class FuenteHistorialZernio implements FuenteHistorial {
     cursor: string | null,
     limite: number
   ) {
-    const json = await this.get('/inbox/conversations', {
+    const json = (await this.get('/inbox/conversations', {
       accountId: cuentaId,
       limit: String(limite),
       cursor,
-    });
+    }))!;
     const lista = Array.isArray(json.data) ? json.data : [];
     return {
       items: lista
@@ -231,10 +313,10 @@ export class FuenteHistorialZernio implements FuenteHistorial {
     cursor: string | null,
     limite: number
   ) {
-    const json = await this.get(
+    const json = (await this.get(
       `/inbox/conversations/${encodeURIComponent(conversacionId)}/messages`,
       { accountId: cuentaId, limit: String(limite), cursor }
-    );
+    ))!;
     const lista = Array.isArray(json.messages)
       ? json.messages
       : Array.isArray(json.data)
@@ -246,6 +328,45 @@ export class FuenteHistorialZernio implements FuenteHistorial {
         .filter((m): m is MensajeRemoto => m !== null),
       siguiente: siguienteDe(json),
     };
+  }
+
+  /**
+   * `GET /v1/contacts?accountId&platform=whatsapp&limit&skip`. El siguiente
+   * `skip` avanza por lo que LLEGÓ, no por el `limit` pedido: si el proveedor
+   * devuelve menos, no se salta a nadie.
+   */
+  async contactos(
+    cuentaId: string,
+    salto: number,
+    limite: number
+  ): Promise<PaginaContactos> {
+    const json = (await this.get('/contacts', {
+      accountId: cuentaId,
+      platform: 'whatsapp',
+      limit: String(limite),
+      skip: String(salto),
+    }))!;
+    const lista = Array.isArray(json.contacts) ? json.contacts : [];
+    const p = obj(json.pagination);
+    return {
+      items: lista
+        .map(leerContactoDeLista)
+        .filter((c): c is ContactoRemoto => c !== null),
+      siguiente:
+        p.hasMore === true && lista.length > 0 ? salto + lista.length : null,
+    };
+  }
+
+  async contacto(
+    id: string,
+    cuentaId: string | null
+  ): Promise<ContactoRemoto | null> {
+    const json = await this.get(
+      `/contacts/${encodeURIComponent(id)}`,
+      {},
+      true
+    );
+    return json ? leerContactoUno(json, cuentaId) : null;
   }
 }
 
@@ -268,13 +389,17 @@ export function esperaDe(h: Headers, ahora = Date.now()): number {
  * - `pagina`: el cursor de Zernio de la página de chats en curso (null = la primera);
  * - `hechas`: los chats de ESA página que ya se terminaron;
  * - `enCurso`: el chat a medias, el cursor de sus mensajes y si lo creó la historia;
- * - `listas`: cuántos chats van en total (para el avance).
+ * - `listas`: cuántos chats van en total (para el avance);
+ * - `fase`: `chats` y después `contactos` (la agenda, para los nombres);
+ * - `saltoContactos`: el `skip` de la próxima página de la agenda.
  */
 export interface EstadoImportacion {
   pagina: string | null;
   hechas: string[];
   enCurso: { id: string; cursor: string; creada?: boolean } | null;
   listas: number;
+  fase: 'chats' | 'contactos';
+  saltoContactos: number;
 }
 
 const INICIO: EstadoImportacion = {
@@ -282,6 +407,8 @@ const INICIO: EstadoImportacion = {
   hechas: [],
   enCurso: null,
   listas: 0,
+  fase: 'chats',
+  saltoContactos: 0,
 };
 
 export function codificarCursor(e: EstadoImportacion): string {
@@ -311,6 +438,14 @@ export function leerCursor(
             }
           : null,
       listas: typeof e.listas === 'number' && e.listas >= 0 ? e.listas : 0,
+      // Un cursor de antes de la fase de contactos sigue en los chats.
+      fase: e.fase === 'contactos' ? 'contactos' : 'chats',
+      saltoContactos:
+        typeof e.saltoContactos === 'number' &&
+        Number.isInteger(e.saltoContactos) &&
+        e.saltoContactos >= 0
+          ? e.saltoContactos
+          : 0,
     };
   } catch {
     throw new ErrorHistorial(
@@ -330,6 +465,7 @@ export interface OpcionesImportar {
   presupuestoMs?: number;
   conversacionesPorPagina?: number;
   mensajesPorPagina?: number;
+  contactosPorPagina?: number;
   /** Para las pruebas. */
   ahora?: () => number;
   esperar?: (ms: number) => Promise<void>;
@@ -344,6 +480,10 @@ export interface ResultadoTramo {
   listas: number;
   /** Mensajes saltados: borrados, con fecha ilegible o posteriores a la conexión. */
   saltados: number;
+  /** Contactos de la agenda leídos en este tramo. */
+  contactosLeidos: number;
+  /** Nombres de contactos completados en este tramo. */
+  nombres: number;
   cursor: string | null;
   terminado: boolean;
   /** Si el proveedor pidió esperar: cuánto antes de la siguiente llamada. */
@@ -369,11 +509,10 @@ function tipoDe(adjunto: { tipo: string | null } | undefined): ContentType {
 const ESTADOS_SALIENTE = new Set(['sent', 'delivered', 'read', 'failed']);
 
 function identidadDe(c: ConversacionRemota): IdentidadRemitente {
-  const digitos = (c.participanteId ?? '').replace(/^\+/, '');
-  const esTelefono = /^\d{6,15}$/.test(digitos);
+  const telefono = telefonoCrudo(c.participanteId);
   return {
-    telefono: esTelefono ? digitos : '',
-    waUserId: c.bsuid ?? (esTelefono ? null : c.participanteId),
+    telefono: telefono ?? '',
+    waUserId: c.bsuid ?? (telefono ? null : c.participanteId),
     waParentUserId: null,
     waUsername: null,
     nombre: (c.participanteNombre ?? '').trim(),
@@ -417,6 +556,7 @@ export async function importarHistorial(
   const maxConv = o.maxConversaciones ?? MAX_CONVERSACIONES_POR_TRAMO;
   const porPagina = o.conversacionesPorPagina ?? CONVERSACIONES_POR_PAGINA;
   const msjPorPagina = o.mensajesPorPagina ?? MENSAJES_POR_PAGINA;
+  const contactosPorPagina = o.contactosPorPagina ?? CONTACTOS_POR_PAGINA;
   const queda = () => presupuesto - (ahora() - inicio);
 
   const estado = leerCursor(o.cursor);
@@ -429,6 +569,8 @@ export async function importarHistorial(
     mensajes: 0,
     listas: estado.listas,
     saltados: 0,
+    contactosLeidos: 0,
+    nombres: 0,
     cursor: null,
     terminado: false,
     esperarMs: null,
@@ -456,6 +598,8 @@ export async function importarHistorial(
     return r;
   };
 
+  if (estado.fase === 'contactos') return faseContactos();
+
   for (;;) {
     if (queda() <= 0) return cortar();
     const pagina = await pedir(() =>
@@ -476,12 +620,45 @@ export async function importarHistorial(
     }
 
     if (!pagina.siguiente) {
-      r.listas = estado.listas;
-      r.terminado = true;
-      return r;
+      // Terminados los chats, la agenda: así los contactos que acaban de
+      // crearse también reciben su nombre.
+      estado.fase = 'contactos';
+      estado.pagina = null;
+      estado.hechas = [];
+      estado.enCurso = null;
+      estado.saltoContactos = 0;
+      return faseContactos();
     }
     estado.pagina = pagina.siguiente;
     estado.hechas = [];
+  }
+
+  /** La agenda: nombres para los contactos que ya existen. Nunca crea uno. */
+  async function faseContactos(): Promise<ResultadoTramo> {
+    for (;;) {
+      if (queda() <= 0) return cortar();
+      const pagina = await pedir(() =>
+        o.fuente.contactos(
+          o.cuentaId,
+          estado.saltoContactos,
+          contactosPorPagina
+        )
+      );
+      if (pagina === 'cortar') return cortar();
+      r.contactosLeidos += pagina.items.length;
+      const pares = pagina.items.flatMap((c) => {
+        const nombre = nombreUtil(c.nombre);
+        return c.telefono && nombre ? [{ telefono: c.telefono, nombre }] : [];
+      });
+      if (pares.length > 0)
+        r.nombres += await o.almacen.completarNombres(inq, pares);
+      if (pagina.siguiente === null) {
+        r.listas = estado.listas;
+        r.terminado = true;
+        return r;
+      }
+      estado.saltoContactos = pagina.siguiente;
+    }
   }
 
   /** `'cortar'` si se acabó el tramo a mitad (queda en `estado.enCurso`). */
