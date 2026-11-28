@@ -50,8 +50,11 @@ export const ADJUNTO_MAX_BYTES = 16 * 1024 * 1024;
 /**
  * Cómo terminó la bajada de un adjunto:
  * - `bajado`: el archivo y su tipo;
- * - `vencido`: 400/404/410. WhatsApp ya borró el archivo y el proveedor
- *   responde lo mismo para siempre: no se reintenta;
+ * - `vencido`: 400/404/410 Y el cuerpo dice que el archivo ya no está
+ *   (la doc: «Media is no longer available on WhatsApp servers (expired or
+ *   deleted by Meta). Permanent, do not retry»): no se reintenta;
+ * - `rechazado`: 400/404/410 sin ese texto. No se sabe si venció o si el
+ *   pedido está mal: quien llama decide (el importador corta con un error);
  * - `grande`: pasa el tope del bucket; tampoco cambia al reintentar;
  * - `limite`: 429, hay que esperar (los encabezados dicen cuánto);
  * - `fallo`: red, tiempo agotado, 5xx, llave o URL ajena. Otro día puede servir.
@@ -59,6 +62,7 @@ export const ADJUNTO_MAX_BYTES = 16 * 1024 * 1024;
 export type ResultadoBajada =
   | { estado: 'bajado'; archivo: ArchivoBajado }
   | { estado: 'vencido'; http: number }
+  | { estado: 'rechazado'; http: number }
   | { estado: 'grande' }
   | { estado: 'limite'; encabezados: Headers }
   | { estado: 'fallo'; http: number | null };
@@ -70,6 +74,10 @@ export type ResultadoBajada =
  * (`/api/v1/whatsapp/media/{id}?accountId=…`, así la trae la bandeja): se
  * resuelve contra la base.
  */
+/** Lo que dice el cuerpo de un archivo que WhatsApp ya borró. */
+export const ARCHIVO_VENCIDO =
+  /expired|no longer available|deleted by meta|media[^"]{0,40}(?:not found|unavailable)/i;
+
 export async function bajarMediaZernio(
   config: {
     apiKey: string;
@@ -106,8 +114,10 @@ export async function bajarMediaZernio(
     return { estado: 'limite', encabezados: respuesta.headers };
   }
   if ([400, 404, 410].includes(respuesta.status)) {
-    await descartar();
-    return { estado: 'vencido', http: respuesta.status };
+    const cuerpo = await respuesta.text().catch(() => '');
+    return ARCHIVO_VENCIDO.test(cuerpo)
+      ? { estado: 'vencido', http: respuesta.status }
+      : { estado: 'rechazado', http: respuesta.status };
   }
   if (!respuesta.ok) {
     await descartar();

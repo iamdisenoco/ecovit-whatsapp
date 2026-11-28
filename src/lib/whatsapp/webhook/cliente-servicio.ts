@@ -36,3 +36,21 @@ export function clienteServicioWebhook(): SupabaseClient {
   );
   return cliente;
 }
+
+/** Lo que sube el historial a Storage: un archivo de 16 MB no puede colgar el tramo. */
+export const TIEMPO_SUBIDA_HISTORIAL_MS = 15_000;
+
+let clienteHistorial: SupabaseClient | null = null;
+
+/** El cliente con clave de servicio para Storage del historial, con tope por llamada. */
+export function clienteServicioHistorial(): SupabaseClient {
+  clienteHistorial ??= createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    {
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: { fetch: fetchConTope(TIEMPO_SUBIDA_HISTORIAL_MS) },
+    }
+  );
+  return clienteHistorial;
+}

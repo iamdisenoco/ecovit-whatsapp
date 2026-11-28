@@ -47,6 +47,49 @@ export function rutaDesdeUrlInterna(url: string): string | null {
 }
 
 /**
+ * Los tipos que admite el bucket `chat-media` (`allowed_mime_types`, migración
+ * 0110 de ecovit-comercial). Storage rechaza cualquier otro: un archivo así no
+ * se baja ni se reintenta. Si la migración cambia la lista, cambia aquí.
+ */
+export const TIPOS_BUCKET_ADJUNTOS: ReadonlySet<string> = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+  'video/mp4',
+  'video/3gpp',
+  'video/3gp',
+  'video/quicktime',
+  'application/pdf',
+  'application/vnd.ms-powerpoint',
+  'application/msword',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'text/plain',
+  'audio/ogg',
+  'audio/mpeg',
+  'audio/aac',
+  'audio/mp4',
+  'audio/amr',
+  'audio/opus',
+]);
+
+/** ¿El bucket acepta este tipo? `null` (no se sabe) no se descarta aquí. */
+export function tipoAdmitido(mime: string | null | undefined): boolean {
+  const base = normalizeMimeType(mime);
+  return base !== null && TIPOS_BUCKET_ADJUNTOS.has(base);
+}
+
+export type ResultadoGuardar =
+  | { estado: 'guardado'; url: string }
+  /** Sin tipo o con uno que el bucket no acepta: no cambia al reintentar. */
+  | { estado: 'tipo_no_admitido' }
+  /** Storage falló: puede servir otro día. */
+  | { estado: 'fallo' };
+
+/**
  * Guarda en el bucket un archivo ya bajado, en la ruta de siempre. Devuelve la
  * `media_url` interna, o `null` si no tiene un tipo usable o Storage falló. La
  * usan el webhook y el importador del historial: la misma ruta para los dos.
@@ -56,9 +99,10 @@ export async function guardarArchivoAdjunto(
   destino: { accountId: string; wamid: string; indice: number },
   archivo: ArchivoBajado,
   mimeDeclarado: string | null
-): Promise<string | null> {
+): Promise<ResultadoGuardar> {
   const mime = normalizeMimeType(archivo.mime ?? mimeDeclarado);
-  if (!mime) return null;
+  if (!mime || !TIPOS_BUCKET_ADJUNTOS.has(mime))
+    return { estado: 'tipo_no_admitido' };
   const ruta = rutaAdjunto(
     destino.accountId,
     destino.wamid,
@@ -66,7 +110,9 @@ export async function guardarArchivoAdjunto(
     mime
   );
   const ok = await almacen.guardarAdjunto(ruta, archivo.bytes, mime);
-  return ok ? urlInternaAdjunto(ruta) : null;
+  return ok
+    ? { estado: 'guardado', url: urlInternaAdjunto(ruta) }
+    : { estado: 'fallo' };
 }
 
 export async function guardarAdjuntoEntrante(
@@ -83,7 +129,7 @@ export async function guardarAdjuntoEntrante(
       err instanceof Error ? err.message : err
     );
   }
-  const url = archivo
+  const guardado = archivo
     ? await guardarArchivoAdjunto(
         almacen,
         {
@@ -95,7 +141,7 @@ export async function guardarAdjuntoEntrante(
         trabajo.adjunto.mime
       )
     : null;
-  if (!url) {
+  if (guardado?.estado !== 'guardado') {
     console.warn(
       `[webhook] adjunto de ${trabajo.wamid} recibido, sin descargar`
     );
@@ -104,7 +150,7 @@ export async function guardarAdjuntoEntrante(
   // Si el mensaje no traía texto, se quita el aviso de «sin descargar».
   await almacen.actualizarAdjunto(
     trabajo.mensajeId,
-    url,
+    guardado.url,
     trabajo.textoOriginal ?? null
   );
   return 'guardado';

@@ -34,7 +34,7 @@ import type {
   ContentType,
   MensajeNuevo,
 } from '../webhook/almacen';
-import { guardarArchivoAdjunto } from '../webhook/adjuntos';
+import { guardarArchivoAdjunto, tipoAdmitido } from '../webhook/adjuntos';
 import { nombreUtil } from '../webhook/contactos-supabase';
 import {
   ADJUNTO_SIN_DESCARGAR,
@@ -451,7 +451,8 @@ export function esperaDe(h: Headers, ahora = Date.now()): number {
  *   sigue (null = la primera) y si lo creó la historia;
  * - `listas`: cuántos chats van en total (para el avance);
  * - `fase`: `chats` y después `contactos` (la agenda, para los nombres);
- * - `saltoContactos`: el `skip` de la próxima página de la agenda.
+ * - `saltoContactos`: el `skip` de la próxima página de la agenda;
+ * - `bajoAlguno`: si en esta corrida ya respondió bien algún archivo.
  */
 export interface EstadoImportacion {
   pagina: string | null;
@@ -460,6 +461,7 @@ export interface EstadoImportacion {
   listas: number;
   fase: 'chats' | 'contactos';
   saltoContactos: number;
+  bajoAlguno?: boolean;
 }
 
 const INICIO: EstadoImportacion = {
@@ -505,6 +507,7 @@ export function leerCursor(
         e.saltoContactos >= 0
           ? e.saltoContactos
           : 0,
+      bajoAlguno: e.bajoAlguno === true,
     };
   } catch {
     throw new ErrorHistorial(
@@ -553,6 +556,8 @@ export interface ResultadoTramo {
   adjuntosVencidos: number;
   /** Adjuntos que fallaron por otra cosa: quedan pendientes para otra corrida. */
   adjuntosFallidos: number;
+  /** Adjuntos que no se alcanzaron a pedir (sin tiempo o el proveedor pidió esperar). */
+  adjuntosPendientes: number;
   /** Mensajes vacíos de la sincronización (131051) borrados de una corrida vieja. */
   vaciosBorrados: number;
   /** Chats a los que se les rehízo el resumen con los mensajes que quedan. */
@@ -646,6 +651,7 @@ export async function importarHistorial(
     adjuntosBajados: 0,
     adjuntosVencidos: 0,
     adjuntosFallidos: 0,
+    adjuntosPendientes: 0,
     vaciosBorrados: 0,
     chatsRecalculados: 0,
   };
@@ -691,6 +697,8 @@ export async function importarHistorial(
       estado.enCurso = null;
       estado.listas++;
       r.procesadas++;
+      // Terminó el chat, pero el proveedor pidió esperar más de lo que queda.
+      if (terminada === 'listo_y_cortar') return cortar();
     }
 
     if (!pagina.siguiente) {
@@ -738,7 +746,7 @@ export async function importarHistorial(
   /** `'cortar'` si se acabó el tramo a mitad (queda en `estado.enCurso`). */
   async function importarConversacion(
     conv: ConversacionRemota
-  ): Promise<'listo' | 'cortar'> {
+  ): Promise<'listo' | 'listo_y_cortar' | 'cortar'> {
     if (conv.plataforma && conv.plataforma !== 'whatsapp') return 'listo';
     // El chat se busca o se crea recién con el primer mensaje importable: un
     // chat sin historia no se crea, y uno que ya existía no se toca.
@@ -820,15 +828,17 @@ export async function importarHistorial(
         await o.almacen.ajustarFechasHistoria(conversacionId, desde, hasta);
 
       let recalcular = false;
+      let esperarProveedor = false;
       if (conversacionId && importables.length > 0) {
         const filas = importables.map((m) => filaDe(m, conversacionId!));
         r.mensajes += await o.almacen.insertarMensajesSiNuevos(filas);
 
-        // Los adjuntos: se bajan los que siguen pendientes. Si el tramo se
-        // acaba a mitad, se vuelve a pedir ESTA página (todo es idempotente).
+        // Los adjuntos pendientes. Pase lo que pase con ellos, la página se
+        // termina y el cursor avanza: lo que no se pudo queda pendiente para
+        // otra corrida, nunca para volver a pedir esta página.
         const adj = await bajarAdjuntos(conversacionId, importables);
-        if (adj === 'cortar') return pausar(cursor);
-        recalcular ||= adj;
+        recalcular ||= adj.cambio;
+        esperarProveedor ||= adj.esperar;
 
         let ultimo = filas[0];
         let primerEntrante: string | null = null;
@@ -876,12 +886,14 @@ export async function importarHistorial(
           conversacionId,
           new Date(conexion).toISOString()
         );
-        r.chatsRecalculados++;
+        if (quedo !== 'sin_cambios' && quedo !== 'otro_escribio')
+          r.chatsRecalculados++;
         if (quedo === 'borrado') conversacionId = null;
       }
 
-      if (!pagina.siguiente) return 'listo';
+      if (!pagina.siguiente) return esperarProveedor ? 'listo_y_cortar' : 'listo';
       cursor = pagina.siguiente;
+      if (esperarProveedor) return pausar(cursor);
     }
   }
 
@@ -889,17 +901,23 @@ export async function importarHistorial(
    * Baja los adjuntos pendientes de una página, ya insertada. Un mensaje está
    * pendiente si no tiene `media_url` ni el aviso de «sin descargar»: así se
    * completan también los «[adjunto]» de una corrida vieja, y no se vuelve a
-   * pedir lo que ya se bajó ni lo que ya se sabe vencido. Devuelve si cambió
-   * algún mensaje (hay que rehacer la vista previa) o `'cortar'`.
+   * pedir lo que ya se bajó ni lo que ya se sabe perdido.
+   *
+   * Nunca hace volver a pedir la página: sin tiempo, con un 429 largo o con un
+   * fallo pasajero, el adjunto queda pendiente y se sigue. Lo que no va a
+   * cambiar al reintentar (vencido, muy grande, tipo que el bucket no acepta)
+   * queda «sin descargar» y no se vuelve a pedir. `cambio`: hay que rehacer la
+   * vista previa; `esperar`: el proveedor pidió esperar más de lo que queda.
    */
   async function bajarAdjuntos(
     conversacionId: string,
     mensajes: MensajeRemoto[]
-  ): Promise<boolean | 'cortar'> {
+  ): Promise<{ cambio: boolean; esperar: boolean }> {
+    const salida = { cambio: false, esperar: false };
     const bajar = o.fuente.adjunto?.bind(o.fuente);
-    if (!bajar) return false;
+    if (!bajar) return salida;
     const conAdjunto = mensajes.filter((m) => m.adjuntos[0]?.url);
-    if (conAdjunto.length === 0) return false;
+    if (conAdjunto.length === 0) return salida;
     const guardados = new Map(
       (
         await o.almacen.mensajesPorWamid(
@@ -908,42 +926,96 @@ export async function importarHistorial(
         )
       ).map((g) => [g.message_id, g])
     );
-    let cambio = false;
+    const pendiente = () => r.adjuntosPendientes++;
+    /** Para siempre: no se vuelve a pedir. El pie de foto se conserva. */
+    const perdido = async (id: string, texto: string | null) => {
+      const ok = await o.almacen.actualizarAdjunto(
+        id,
+        null,
+        texto ? `${texto}\n${ADJUNTO_SIN_DESCARGAR}` : ADJUNTO_SIN_DESCARGAR
+      );
+      if (ok) {
+        r.adjuntosVencidos++;
+        salida.cambio = true;
+      } else r.adjuntosFallidos++;
+    };
+    let sinTiempo = false;
     for (const m of conAdjunto) {
       const g = guardados.get(m.id);
       if (!g || g.media_url) continue;
       if ((g.content_text ?? '').includes(ADJUNTO_SIN_DESCARGAR)) continue;
-      if (queda() <= 0) return 'cortar';
       const adjunto = m.adjuntos[0];
+      // Un tipo que el bucket no acepta no se baja.
+      if (adjunto.mime && !tipoAdmitido(adjunto.mime)) {
+        await perdido(g.id, m.texto);
+        continue;
+      }
+      if (sinTiempo || queda() <= 0) {
+        sinTiempo = true;
+        pendiente();
+        continue;
+      }
       const bajada = await pedir(() => bajar(adjunto.url!, adjunto.mime));
-      if (bajada === 'cortar') return 'cortar';
-      if (bajada.estado === 'bajado') {
-        const url = await guardarArchivoAdjunto(
-          o.almacen,
-          { accountId: inq.accountId, wamid: m.id, indice: 0 },
-          bajada.archivo,
-          adjunto.mime
-        );
-        if (!url) {
-          r.adjuntosFallidos++;
-          continue;
+      if (bajada === 'cortar') {
+        // 429 más largo que lo que queda: el resto, pendiente.
+        salida.esperar = true;
+        sinTiempo = true;
+        pendiente();
+        continue;
+      }
+      switch (bajada.estado) {
+        case 'bajado': {
+          estado.bajoAlguno = true;
+          if (queda() <= 0) {
+            sinTiempo = true;
+            pendiente();
+            break;
+          }
+          const guardado = await guardarArchivoAdjunto(
+            o.almacen,
+            { accountId: inq.accountId, wamid: m.id, indice: 0 },
+            bajada.archivo,
+            adjunto.mime
+          );
+          if (guardado.estado === 'tipo_no_admitido') {
+            await perdido(g.id, m.texto);
+          } else if (guardado.estado === 'fallo') {
+            r.adjuntosFallidos++;
+          } else if (
+            await o.almacen.actualizarAdjunto(g.id, guardado.url, m.texto ?? null)
+          ) {
+            r.adjuntosBajados++;
+            salida.cambio = true;
+          } else {
+            r.adjuntosFallidos++;
+          }
+          break;
         }
-        await o.almacen.actualizarAdjunto(g.id, url, m.texto ?? null);
-        r.adjuntosBajados++;
-        cambio = true;
-      } else if (bajada.estado === 'vencido' || bajada.estado === 'grande') {
-        // Para siempre: no se vuelve a pedir. El pie de foto se conserva.
-        await o.almacen.actualizarAdjunto(
-          g.id,
-          null,
-          m.texto ? `${m.texto}\n${ADJUNTO_SIN_DESCARGAR}` : ADJUNTO_SIN_DESCARGAR
-        );
-        r.adjuntosVencidos++;
-        cambio = true;
-      } else {
-        r.adjuntosFallidos++;
+        case 'vencido':
+        case 'grande':
+          estado.bajoAlguno = true;
+          await perdido(g.id, m.texto);
+          break;
+        case 'rechazado':
+          // Un 400 sin «venció» en el PRIMER archivo de la corrida puede ser
+          // un pedido mal armado: se corta con error en vez de dar todo por
+          // perdido. Después de uno que funcionó, queda pendiente.
+          if (!estado.bajoAlguno)
+            throw new ErrorHistorial(
+              `La conexión de WhatsApp rechazó el primer archivo (${bajada.http}). Se detuvo la importación sin marcar nada como perdido.`
+            );
+          r.adjuntosFallidos++;
+          break;
+        case 'fallo':
+          // La llave no sirve: todos fallarían igual. Se corta con error.
+          if (bajada.http === 401 || bajada.http === 403)
+            throw new ErrorHistorial(
+              `La conexión de WhatsApp no dejó bajar los archivos (${bajada.http}).`
+            );
+          r.adjuntosFallidos++;
+          break;
       }
     }
-    return cambio;
+    return salida;
   }
 }

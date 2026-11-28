@@ -10,6 +10,7 @@ import {
 import { nombreProveedorOnull } from '@/lib/whatsapp/proveedor/nombre';
 import { configZernioDesdeEntorno } from '@/lib/whatsapp/proveedor/zernio';
 import { AlmacenSupabase } from '@/lib/whatsapp/webhook/almacen-supabase';
+import { clienteServicioHistorial } from '@/lib/whatsapp/webhook/cliente-servicio';
 
 /**
  * POST /api/whatsapp/historial  (solo la dirección)
@@ -47,7 +48,12 @@ export async function POST(request: Request) {
     const cursor = typeof cuerpo?.cursor === 'string' ? cuerpo.cursor : null;
 
     const r = await importarHistorial({
-      almacen: new AlmacenSupabase(supabaseAdmin()),
+      // Storage (y anotar el adjunto) va con tope por llamada.
+      almacen: new AlmacenSupabase(
+        supabaseAdmin(),
+        process.env,
+        clienteServicioHistorial()
+      ),
       fuente: new FuenteHistorialZernio({
         apiKey: config.apiKey,
         baseUrl: config.baseUrl,

@@ -27,6 +27,13 @@ const SINCRONIZACION = '2026-10-31T23:50:00.000Z';
 
 type Crudo = Record<string, unknown>;
 
+/** El 400 de la documentación de get-whatsapp-media. */
+const CUERPO_VENCIDO = JSON.stringify({
+  error:
+    'Media is no longer available on WhatsApp servers (expired or deleted by Meta).',
+  type: 'invalid_request_error',
+});
+
 /** La bandeja del proveedor, en JSON crudo. Solo responde GET. */
 class BandejaFalsa {
   chats: Crudo[] = [];
@@ -34,6 +41,11 @@ class BandejaFalsa {
   /** Estado HTTP de cada archivo por su id (200 si no está). */
   media = new Map<string, number>();
   pedidosMedia: string[] = [];
+  pedidosMensajes = 0;
+  /** El cuerpo de un 400/404/410 por id (si no, el de la doc: «venció»). */
+  cuerpoMedia = new Map<string, string>();
+  /** El content-type que devuelve el servidor por id (si no, image/jpeg). */
+  tipoMedia = new Map<string, string>();
   noGet = 0;
   /** Los próximos N pedidos de archivos responden 429. */
   limitarMedia = 0;
@@ -71,6 +83,7 @@ class BandejaFalsa {
       p
     );
     if (enChat) {
+      this.pedidosMensajes++;
       const lista = this.mensajes.get(enChat[1]) ?? [];
       return Response.json({ messages: lista, pagination: {} });
     }
@@ -88,9 +101,12 @@ class BandejaFalsa {
         });
       }
       const status = this.media.get(media[1]) ?? 200;
-      if (status !== 200) return new Response('{}', { status });
+      if (status !== 200)
+        return new Response(this.cuerpoMedia.get(media[1]) ?? CUERPO_VENCIDO, {
+          status,
+        });
       return new Response(new Uint8Array([1, 2, 3, 4]), {
-        headers: { 'content-type': 'image/jpeg' },
+        headers: { 'content-type': this.tipoMedia.get(media[1]) ?? 'image/jpeg' },
       });
     }
     return new Response('', { status: 404 });
@@ -318,7 +334,7 @@ describe('historial: adjuntos', () => {
     expect(b.pedidosMedia).toEqual(['61', '61']);
   });
 
-  it('si el tramo se acaba a mitad de las bajadas, sigue en la misma página', async () => {
+  it('sin tiempo, los adjuntos quedan pendientes y la página no se vuelve a pedir', async () => {
     const b = new BandejaFalsa();
     b.chat('c1', '573001112233');
     for (let i = 0; i < 6; i++)
@@ -330,12 +346,103 @@ describe('historial: adjuntos', () => {
     b.tardaMedia = 4_000;
     const a = almacen();
     const tramos = await importar(a, b, { presupuestoMs: 10_000 });
-    expect(tramos.length).toBeGreaterThan(1);
-    // Testigo: el primer tramo no las bajó todas.
-    expect(tramos[0].adjuntosBajados).toBeLessThan(6);
+    // Una sola página de mensajes en toda la corrida.
+    expect(b.pedidosMensajes).toBe(1);
+    const pendientes = tramos.reduce((n, t) => n + t.adjuntosPendientes, 0);
+    // Testigo: de verdad faltó tiempo.
+    expect(pendientes).toBeGreaterThan(0);
+    expect(a.mensajes.filter((m) => !m.media_url)).toHaveLength(pendientes);
+    const guardados = a.mensajes.filter((m) => m.media_url).length;
+    expect(guardados).toBeGreaterThan(0);
+    const primera = [...b.pedidosMedia];
+    // Otra corrida completa lo que quedó y no vuelve a pedir lo guardado. (El
+    // que se bajó sin tiempo para subirlo se descartó y se vuelve a pedir.)
+    await importar(a, b);
     expect(a.mensajes.every((m) => m.media_url)).toBe(true);
-    // Cada archivo se pidió una sola vez.
-    expect(new Set(b.pedidosMedia).size).toBe(b.pedidosMedia.length);
+    const segunda = b.pedidosMedia.slice(primera.length);
+    expect(segunda).toHaveLength(6 - guardados);
+  });
+
+  it('una página con adjuntos que siempre fallan termina en una sola corrida', async () => {
+    const b = new BandejaFalsa();
+    b.chat('c1', '573001112233');
+    b.mensaje('c1', { id: 'w.ok', createdAt: '2026-10-01T09:59:00Z', ...adjunto('80') });
+    for (let i = 1; i <= 4; i++) {
+      b.mensaje('c1', { id: `w.${i}`, createdAt: `2026-10-01T10:0${i}:00Z`, ...adjunto(`8${i}`) });
+      b.media.set(`8${i}`, 500);
+    }
+    // Uno que el bucket no acepta (lo dice el servidor) y uno que lo declara.
+    b.mensaje('c1', { id: 'w.zip', createdAt: '2026-10-01T10:06:00Z', ...adjunto('86', 'file', 'application/pdf') });
+    b.tipoMedia.set('86', 'application/zip');
+    b.mensaje('c1', { id: 'w.heic', createdAt: '2026-10-01T10:07:00Z', ...adjunto('87', 'image', 'image/heic') });
+    const a = almacen();
+    const tramos = await importar(a, b, { presupuestoMs: 10_000 });
+    expect(tramos.at(-1)!.terminado).toBe(true);
+    expect(b.pedidosMensajes).toBe(1);
+    const [r] = tramos;
+    expect(r.adjuntosBajados).toBe(1);
+    expect(r.adjuntosFallidos).toBe(4);
+    expect(r.adjuntosVencidos).toBe(2);
+    // El de tipo declarado no admitido ni se pide; cada otro, una vez.
+    expect(b.pedidosMedia.sort()).toEqual(['80', '81', '82', '83', '84', '86']);
+    expect(msj(a, 'w.zip')?.content_text).toBe(ADJUNTO_SIN_DESCARGAR);
+    expect(msj(a, 'w.heic')?.content_text).toBe(ADJUNTO_SIN_DESCARGAR);
+    // Los pasajeros quedan pendientes, no perdidos.
+    expect(msj(a, 'w.1')).toMatchObject({ content_text: TEXTO_ADJUNTO, media_url: null });
+    // La corrida siguiente no vuelve a pedir los perdidos.
+    await importar(a, b);
+    expect(b.pedidosMedia.filter((x) => x === '86' || x === '87')).toEqual(['86']);
+  });
+
+  it('un 400 sin «venció» en el primer archivo corta la corrida con error', async () => {
+    const b = new BandejaFalsa();
+    b.chat('c1', '573001112233');
+    b.mensaje('c1', { id: 'w.1', createdAt: '2026-10-01T10:00:00Z', ...adjunto('91') });
+    b.media.set('91', 400);
+    b.cuerpoMedia.set('91', '{"error":"accountId is required"}');
+    const a = almacen();
+    await expect(importar(a, b)).rejects.toThrow(/rechazó el primer archivo \(400\)/);
+    // No marcó nada como perdido.
+    expect(msj(a, 'w.1')).toMatchObject({ content_text: TEXTO_ADJUNTO, media_url: null });
+  });
+
+  it('testigo: el mismo 400 después de uno que bajó queda pendiente', async () => {
+    const b = new BandejaFalsa();
+    b.chat('c1', '573001112233');
+    b.mensaje('c1', { id: 'w.0', createdAt: '2026-10-01T09:00:00Z', ...adjunto('90') });
+    b.mensaje('c1', { id: 'w.1', createdAt: '2026-10-01T10:00:00Z', ...adjunto('91') });
+    b.media.set('91', 400);
+    b.cuerpoMedia.set('91', '{"error":"accountId is required"}');
+    const a = almacen();
+    const [r] = await importar(a, b);
+    expect(r.adjuntosBajados).toBe(1);
+    expect(r.adjuntosFallidos).toBe(1);
+    expect(msj(a, 'w.1')).toMatchObject({ content_text: TEXTO_ADJUNTO, media_url: null });
+  });
+
+  it('un 401 corta la corrida con error (la llave no sirve para ninguno)', async () => {
+    const b = new BandejaFalsa();
+    b.chat('c1', '573001112233');
+    b.mensaje('c1', { id: 'w.1', createdAt: '2026-10-01T10:00:00Z', ...adjunto('92') });
+    b.media.set('92', 401);
+    const a = almacen();
+    await expect(importar(a, b)).rejects.toThrow(/no dejó bajar los archivos \(401\)/);
+    expect(msj(a, 'w.1')?.content_text).toBe(TEXTO_ADJUNTO);
+  });
+
+  it('si anotar el adjunto en el mensaje falla, no cuenta como bajado', async () => {
+    const b = new BandejaFalsa();
+    b.chat('c1', '573001112233');
+    b.mensaje('c1', { id: 'w.1', createdAt: '2026-10-01T10:00:00Z', ...adjunto('93') });
+    const a = almacen();
+    a.fallarActualizarAdjunto = true;
+    const [r] = await importar(a, b);
+    expect(r.adjuntosBajados).toBe(0);
+    expect(r.adjuntosFallidos).toBe(1);
+    // Testigo: con la base bien, la corrida siguiente lo completa.
+    a.fallarActualizarAdjunto = false;
+    const [r2] = await importar(a, b);
+    expect(r2.adjuntosBajados).toBe(1);
   });
 });
 
@@ -542,6 +649,8 @@ describe('historial: limpieza de los vacíos que ya entraron', () => {
     const [r] = await importar(a, b);
     expect(r.vaciosBorrados).toBe(0);
     expect(r.mensajes).toBe(0);
+    // Ya estaba bien: no se reescribe.
+    expect(r.chatsRecalculados).toBe(0);
     expect(foto()).toBe(despues);
   });
 
