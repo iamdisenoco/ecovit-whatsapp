@@ -32,17 +32,76 @@ export interface ContactoFila {
   nombre_origen?: 'agenda' | 'persona' | null;
 }
 
+/**
+ * ¿Falta `contacts.nombre_origen`? La migración 132 se aplica antes de
+ * desplegar, pero si llegara a faltar, leer contactos no puede tumbar el
+ * webhook: la respuesta «esa columna no existe» se anota acá y, por 5 minutos,
+ * se lee sin ella y se sigue con la regla vieja (solo vacío o relleno, sin
+ * escribir el origen). Vencido el aviso, se vuelve a intentar. Exportado para
+ * las pruebas.
+ */
+export const columnaOrigen = {
+  faltaDesde: null as number | null,
+  ahora: () => Date.now(),
+};
+export const AVISO_COLUMNA_MS = 5 * 60_000;
+
+function faltaOrigen(): boolean {
+  const desde = columnaOrigen.faltaDesde;
+  if (desde === null) return false;
+  if (columnaOrigen.ahora() - desde < AVISO_COLUMNA_MS) return true;
+  columnaOrigen.faltaDesde = null;
+  return false;
+}
+
+/** Solo el error de columna inexistente, y solo si nombra a `nombre_origen`. */
+export function esFaltaDeColumnaOrigen(error: {
+  code?: string;
+  message?: string;
+}): boolean {
+  return (
+    (error.code === '42703' || error.code === 'PGRST204') &&
+    /nombre_origen/.test(error.message ?? '')
+  );
+}
+
+type Respuesta = {
+  data: unknown;
+  error: { code?: string; message: string } | null;
+};
+
+/**
+ * Corre una lectura de `contacts` pidiendo también `nombre_origen`; si la
+ * columna no existe, anota el aviso y la repite sin ella. Una sola consulta en
+ * el caso normal: no suma pedidos.
+ */
+async function conOrigen(
+  consulta: (columnas: string) => PromiseLike<Respuesta>
+): Promise<Respuesta> {
+  if (!faltaOrigen()) {
+    const r = await consulta(`${COLUMNAS_CONTACTO}, nombre_origen`);
+    if (!r.error || !esFaltaDeColumnaOrigen(r.error)) return r;
+    console.warn(
+      '[contactos] falta contacts.nombre_origen (migración 132): por 5 minutos solo se completan los vacíos'
+    );
+    columnaOrigen.faltaDesde = columnaOrigen.ahora();
+  }
+  return consulta(COLUMNAS_CONTACTO);
+}
+
 async function contactoPorBsuid(
   db: SupabaseClient,
   accountId: string,
   waUserId: string
 ): Promise<ContactoFila | null> {
-  const { data, error } = await db
-    .from('contacts')
-    .select(COLUMNAS_CONTACTO)
-    .eq('account_id', accountId)
-    .eq('wa_user_id', waUserId)
-    .maybeSingle();
+  const { data, error } = await conOrigen((columnas) =>
+    db
+      .from('contacts')
+      .select(columnas)
+      .eq('account_id', accountId)
+      .eq('wa_user_id', waUserId)
+      .maybeSingle()
+  );
   if (error)
     throw new ErrorAlmacen(
       `No se pudo buscar el contacto por BSUID: ${error.message}`
@@ -59,8 +118,12 @@ async function contactoPorTelefono(
   return c ? (c as unknown as ContactoFila) : null;
 }
 
-/** ¿El nombre es de relleno (el teléfono o el BSUID que se puso al crearlo)? */
+/**
+ * ¿El nombre es de relleno (el teléfono o el BSUID que se puso al crearlo)?
+ * Lo que escribió una persona nunca es relleno, aunque sea un teléfono.
+ */
 function sinNombre(c: ContactoFila): boolean {
+  if (c.nombre_origen === 'persona') return false;
   const n = (c.name ?? '').trim();
   if (!n) return true;
   const digitos = n.replace(/\D/g, '');
@@ -217,50 +280,23 @@ export async function buscarOCrearContactoSupabase(
 /** Teléfonos por consulta: cada uno lleva sus variantes y todo va en la URL. */
 const TELEFONOS_POR_CONSULTA = 25;
 
-/**
- * ¿Ya existe `contacts.nombre_origen`? La migración 132 se aplica antes de
- * desplegar, pero si llegara a faltar, `completarNombres` no puede tumbar el
- * webhook: con la primera respuesta «la columna no existe» se anota acá y se
- * sigue con la regla vieja (solo vacío o relleno, sin escribir el origen).
- * Exportado para las pruebas.
- */
-export const columnaOrigen = { falta: false };
-
-function faltaColumnaOrigen(error: { code?: string; message?: string }) {
-  return (
-    error.code === '42703' ||
-    error.code === 'PGRST204' ||
-    /nombre_origen/.test(error.message ?? '')
-  );
-}
-
 async function leerPorTelefono(
   db: SupabaseClient,
   inq: Inquilino,
   variantes: string[]
 ): Promise<ContactoFila[]> {
-  for (;;) {
-    const { data, error } = await db
+  const { data, error } = await conOrigen((columnas) =>
+    db
       .from('contacts')
-      .select(
-        columnaOrigen.falta
-          ? COLUMNAS_CONTACTO
-          : `${COLUMNAS_CONTACTO}, nombre_origen`
-      )
+      .select(columnas)
       .eq('account_id', inq.accountId)
-      .in('phone_normalized', variantes);
-    if (!error) return (data ?? []) as unknown as ContactoFila[];
-    if (!columnaOrigen.falta && faltaColumnaOrigen(error)) {
-      console.warn(
-        '[contactos] falta contacts.nombre_origen (migración 132): solo se completan los vacíos'
-      );
-      columnaOrigen.falta = true;
-      continue;
-    }
+      .in('phone_normalized', variantes)
+  );
+  if (error)
     throw new ErrorAlmacen(
       `No se pudieron buscar los contactos por teléfono: ${error.message}`
     );
-  }
+  return (data ?? []) as unknown as ContactoFila[];
 }
 
 /**
@@ -293,10 +329,10 @@ export async function completarNombresSupabase(
       if (!existente) continue;
       const nombre = nombreParaCompletar(existente, p.nombre);
       if (!nombre) continue;
-      const conOrigen = existente.nombre_origen !== undefined;
+      const leidoOrigen = existente.nombre_origen !== undefined;
       const ahora = new Date().toISOString();
       let q = (
-        conOrigen
+        leidoOrigen
           ? db.from('contacts').update({
               name: nombre,
               nombre_origen: 'agenda',
@@ -310,7 +346,7 @@ export async function completarNombresSupabase(
         existente.name === null
           ? q.is('name', null)
           : q.eq('name', existente.name);
-      if (conOrigen)
+      if (leidoOrigen)
         q =
           existente.nombre_origen === null
             ? q.is('nombre_origen', null)
@@ -326,7 +362,7 @@ export async function completarNombresSupabase(
       if (cambiados && cambiados.length > 0) {
         completados++;
         existente.name = nombre;
-        if (conOrigen) existente.nombre_origen = 'agenda';
+        if (leidoOrigen) existente.nombre_origen = 'agenda';
       }
     }
   }

@@ -4,8 +4,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AlmacenMemoria } from '../webhook/almacen-memoria';
 import {
+  AVISO_COLUMNA_MS,
   columnaOrigen,
   completarNombresSupabase,
+  esFaltaDeColumnaOrigen,
   nombreParaCompletar,
   nombreUtil,
 } from '../webhook/contactos-supabase';
@@ -574,7 +576,8 @@ describe('de punta a punta: del JSON del proveedor al contacto de la app', () =>
 
 describe('completarNombresSupabase', () => {
   beforeEach(() => {
-    columnaOrigen.falta = false;
+    columnaOrigen.faltaDesde = null;
+    columnaOrigen.ahora = () => Date.now();
   });
 
   it('solo escribe el nombre, condicionado al que leyó, y no toca a quien tiene uno', async () => {
@@ -717,7 +720,8 @@ describe('completarNombresSupabase', () => {
 
 describe('completarNombresSupabase: el origen del nombre (migración 132)', () => {
   beforeEach(() => {
-    columnaOrigen.falta = false;
+    columnaOrigen.faltaDesde = null;
+    columnaOrigen.ahora = () => Date.now();
   });
   const fila = (
     id: string,
@@ -771,8 +775,12 @@ describe('completarNombresSupabase: el origen del nombre (migración 132)', () =
       const q = original(t) as Record<string, (...a: unknown[]) => unknown>;
       const select = q.select;
       q.select = (...a: unknown[]) => {
-        // La persona deja el mismo texto: solo el origen delata el cambio.
-        if (++lecturas === 2) filas[0].nombre_origen = 'persona';
+        // Como pasa de verdad: la persona escribe otro texto en la pantalla y
+        // el disparador de la 132 lo deja 'persona'.
+        if (++lecturas === 2) {
+          filas[0].name = 'Ana (obra 4)';
+          filas[0].nombre_origen = 'persona';
+        }
         return select(...a);
       };
       return q;
@@ -782,9 +790,89 @@ describe('completarNombresSupabase: el origen del nombre (migración 132)', () =
     ]);
     expect(n).toBe(0);
     expect(filas[0]).toMatchObject({
-      name: 'Ana vieja',
+      name: 'Ana (obra 4)',
       nombre_origen: 'persona',
     });
+  });
+
+  it('el aviso de columna faltante vence a los 5 minutos y se vuelve a intentar', async () => {
+    let reloj = 1_000_000;
+    columnaOrigen.ahora = () => reloj;
+    const filas = [fila('c1', '573001110001', 'Ana vieja', 'agenda')];
+    const sin = dbDoble(filas, { sinColumnaOrigen: true });
+    await completarNombresSupabase(sin.db as never, INQ, [
+      { telefono: '573001110001', nombre: 'Ana nueva' },
+    ]);
+    expect(columnaOrigen.faltaDesde).toBe(reloj);
+    expect(filas[0].name).toBe('Ana vieja');
+
+    // Ya existe la columna. Dentro de los 5 minutos todavía no se pregunta…
+    const con = dbDoble(filas);
+    reloj += AVISO_COLUMNA_MS - 1;
+    await completarNombresSupabase(con.db as never, INQ, [
+      { telefono: '573001110001', nombre: 'Ana nueva' },
+    ]);
+    expect(filas[0].name).toBe('Ana vieja');
+    // …y al vencer, sí: el renombre de la agenda entra.
+    reloj += 1;
+    const n = await completarNombresSupabase(con.db as never, INQ, [
+      { telefono: '573001110001', nombre: 'Ana nueva' },
+    ]);
+    expect(n).toBe(1);
+    expect(filas[0]).toMatchObject({
+      name: 'Ana nueva',
+      nombre_origen: 'agenda',
+    });
+    expect(columnaOrigen.faltaDesde).toBeNull();
+  });
+
+  it('solo el error de esa columna activa el aviso; otro error se propaga', async () => {
+    expect(
+      esFaltaDeColumnaOrigen({
+        code: '42703',
+        message: 'column contacts.nombre_origen does not exist',
+      })
+    ).toBe(true);
+    expect(
+      esFaltaDeColumnaOrigen({
+        code: 'PGRST204',
+        message: "Could not find the 'nombre_origen' column of 'contacts'",
+      })
+    ).toBe(true);
+    expect(
+      esFaltaDeColumnaOrigen({
+        code: '42703',
+        message: 'column contacts.otra does not exist',
+      })
+    ).toBe(false);
+    expect(
+      esFaltaDeColumnaOrigen({
+        code: '57014',
+        message: 'canceling statement due to timeout (nombre_origen)',
+      })
+    ).toBe(false);
+    // Un 57014 al leer no se disfraza de «falta la columna»: se propaga.
+    const db = {
+      from: () => {
+        const q: Record<string, unknown> = {};
+        for (const op of ['select', 'eq', 'in']) q[op] = () => q;
+        q.then = (ok: (v: unknown) => unknown) =>
+          Promise.resolve({
+            data: null,
+            error: {
+              code: '57014',
+              message: 'canceling statement due to timeout (nombre_origen)',
+            },
+          }).then(ok);
+        return q;
+      },
+    };
+    await expect(
+      completarNombresSupabase(db as never, INQ, [
+        { telefono: '573001110001', nombre: 'Ana' },
+      ])
+    ).rejects.toThrow(/timeout/);
+    expect(columnaOrigen.faltaDesde).toBeNull();
   });
 
   it('sin la columna todavía: no rompe, completa el relleno y no la nombra', async () => {
@@ -799,7 +887,7 @@ describe('completarNombresSupabase: el origen del nombre (migración 132)', () =
     ]);
     expect(n).toBe(1);
     expect(filas.map((f) => f.name)).toEqual(['Ana vieja', 'Ceci']);
-    expect(columnaOrigen.falta).toBe(true);
+    expect(columnaOrigen.faltaDesde).not.toBeNull();
     const updates = llamadas.filter((c) => c.some((x) => x.op === 'update'));
     expect(JSON.stringify(updates)).not.toContain('nombre_origen');
   });
