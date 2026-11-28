@@ -5,16 +5,18 @@
 //
 // - el contacto y el chat salen de `chatDeMensaje` (lo mismo que el webhook),
 //   con `proveedor_conversacion_id` y `proveedor_cuenta_id`;
-// - cada mensaje entra por `insertarMensajeSiNuevo`: el índice único
+// - los mensajes de cada página entran en lote (`insertarMensajesSiNuevos`): el índice único
 //   (conversation_id, message_id) evita duplicar con el webhook y entre
 //   corridas. En Zernio el `id` del mensaje ES el wamid, igual que el
 //   `platformMessageId` del webhook (medido el 28-nov);
 // - nunca despierta al bot ni a los motores, no lo calla, no sube no leídos,
 //   no reabre y no toca `ai_reply_count` ni `ai_autoreply_disabled`. El
 //   resumen del chat se pone con `registrarHistoria`, que no retrocede;
-// - lo reciente y posterior a la conexión se deja al webhook (`MARGEN_VIVO_MS`):
-//   si la historia lo guardara primero, el webhook lo vería repetido y el bot
-//   no contestaría un mensaje vivo.
+// - solo entra lo ESTRICTAMENTE anterior a `conectado_desde`. Lo de después es
+//   siempre del webhook: si la historia lo guardara primero, el webhook lo vería
+//   repetido y el bot no contestaría un mensaje vivo. Sin esa fecha no se importa;
+// - un chat que crea la historia nace cerrado (no queda «esperando respuesta»);
+//   uno que ya existía no se toca, y uno sin mensajes importables no se crea.
 //
 // Va por tramos (Vercel corta a los 60 s): cada llamada procesa hasta
 // `maxConversaciones` chats o hasta `presupuestoMs`, y devuelve un cursor
@@ -26,7 +28,6 @@ import type {
   ContentType,
   MensajeNuevo,
 } from '../webhook/almacen';
-import { esAnteriorALaConexion } from '../webhook/coexistencia';
 import { chatDeMensaje, resumen } from '../webhook/procesar';
 import { obj, str, type Obj } from './zernio-webhook';
 import { ZERNIO_URL_BASE } from './zernio';
@@ -34,12 +35,10 @@ import type { IdentidadRemitente } from './tipos';
 
 /** Lo que se pone en el chat cuando el mensaje era solo un adjunto. */
 export const TEXTO_ADJUNTO = '[adjunto]';
-/** Lo más nuevo que eso y posterior a la conexión es del webhook. */
-export const MARGEN_VIVO_MS = 10 * 60 * 1000;
 export const CONVERSACIONES_POR_PAGINA = 20;
 export const MENSAJES_POR_PAGINA = 100;
 /** Vercel corta a los 60 s: se deja margen para guardar y responder. */
-export const PRESUPUESTO_MS = 40_000;
+export const PRESUPUESTO_MS = 25_000;
 export const MAX_CONVERSACIONES_POR_TRAMO = 10;
 
 // ── Lo que se lee de Zernio ─────────────────────────────────────────────
@@ -88,6 +87,16 @@ export class LimiteDeVelocidad extends Error {
   constructor(readonly esperaMs: number) {
     super('La conexión de WhatsApp pidió esperar un momento.');
     this.name = 'LimiteDeVelocidad';
+  }
+}
+
+/** No hay `conectado_desde`: no se sabe qué es historia. */
+export class SinFechaDeConexion extends Error {
+  constructor() {
+    super(
+      'Falta la fecha en que se conectó el número de WhatsApp. Sin ella no se puede importar el historial.'
+    );
+    this.name = 'SinFechaDeConexion';
   }
 }
 
@@ -329,7 +338,7 @@ export interface ResultadoTramo {
   mensajes: number;
   /** Chats terminados desde el principio (lo que lleva el cursor). */
   listas: number;
-  /** Mensajes saltados: borrados, o recientes que son del webhook. */
+  /** Mensajes saltados: borrados, con fecha ilegible o posteriores a la conexión. */
   saltados: number;
   cursor: string | null;
   terminado: boolean;
@@ -367,6 +376,31 @@ function identidadDe(c: ConversacionRemota): IdentidadRemitente {
   };
 }
 
+function filaDe(m: MensajeRemoto, conversacionId: string): MensajeNuevo {
+  const adjunto = m.adjuntos[0];
+  const tipo = tipoDe(adjunto);
+  return {
+    conversation_id: conversacionId,
+    sender_type: m.saliente ? 'agent' : 'customer',
+    sender_id: null,
+    content_type: tipo,
+    content_text: m.texto ?? (adjunto ? TEXTO_ADJUNTO : null),
+    // Los adjuntos de Zernio piden la llave para bajarse: queda la marca.
+    media_url: null,
+    media_type: adjunto?.mime ?? null,
+    message_id: m.id,
+    status: m.saliente
+      ? ESTADOS_SALIENTE.has(m.estadoEntrega ?? '')
+        ? (m.estadoEntrega as MensajeNuevo['status'])
+        : 'sent'
+      : 'delivered',
+    created_at: new Date(m.creadoEn).toISOString(),
+    reply_to_message_id: null,
+    // No es un eco de ahora: no debe mover el reloj del bot.
+    desde_celular: false,
+  };
+}
+
 const dormir = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export async function importarHistorial(
@@ -383,6 +417,9 @@ export async function importarHistorial(
 
   const estado = leerCursor(o.cursor);
   const inq = await o.almacen.resolverInquilino();
+  // Sin fecha de conexión no se puede separar la historia de lo vivo.
+  const conexion = inq.conectadoDesde ? Date.parse(inq.conectadoDesde) : NaN;
+  if (!Number.isFinite(conexion)) throw new SinFechaDeConexion();
   const r: ResultadoTramo = {
     procesadas: 0,
     mensajes: 0,
@@ -416,6 +453,7 @@ export async function importarHistorial(
   };
 
   for (;;) {
+    if (queda() <= 0) return cortar();
     const pagina = await pedir(() =>
       o.fuente.conversaciones(o.cuentaId, estado.pagina, porPagina)
     );
@@ -447,17 +485,10 @@ export async function importarHistorial(
     conv: ConversacionRemota
   ): Promise<'listo' | 'cortar'> {
     if (conv.plataforma && conv.plataforma !== 'whatsapp') return 'listo';
-    const chat = await chatDeMensaje(o.almacen, inq, identidadDe(conv), {
-      conversacionId: conv.id,
-      cuentaId: conv.cuentaId ?? o.cuentaId,
-    });
-    if (!chat) {
-      console.warn(
-        `[historial] chat ${conv.id} sin teléfono ni BSUID: se salta`
-      );
-      return 'listo';
-    }
-    const conversacionId = chat.conversacion.id;
+    // El chat se busca o se crea recién con el primer mensaje importable: un
+    // chat sin historia no se crea, y uno que ya existía no se toca.
+    let conversacionId: string | null = null;
+    let sinIdentidad = false;
 
     let cursor = estado.enCurso?.id === conv.id ? estado.enCurso.cursor : null;
     for (;;) {
@@ -473,59 +504,57 @@ export async function importarHistorial(
         return 'cortar';
       }
 
-      let ultimo: { texto: string; en: string } | null = null;
-      let primerEntrante: string | null = null;
-      for (const m of pagina.items) {
-        if (m.borrado) {
+      const importables = pagina.items.filter((m) => {
+        const cuando = Date.parse(m.creadoEn);
+        // Borrado o con fecha ilegible: se salta y se cuenta.
+        if (m.borrado || !Number.isFinite(cuando)) {
           r.saltados++;
-          continue;
+          return false;
         }
-        // Lo vivo es del webhook: solo él despierta al bot.
-        if (
-          !esAnteriorALaConexion(m.creadoEn, inq.conectadoDesde) &&
-          Date.parse(m.creadoEn) > ahora() - MARGEN_VIVO_MS
-        ) {
+        // Solo lo ESTRICTAMENTE anterior a la conexión: lo de después es del
+        // webhook, que es el único que despierta al bot y suma no leídos.
+        if (cuando >= conexion) {
           r.saltados++;
-          continue;
+          return false;
         }
-        const adjunto = m.adjuntos[0];
-        const tipo = tipoDe(adjunto);
-        const texto = m.texto ?? (adjunto ? TEXTO_ADJUNTO : null);
-        const fila: MensajeNuevo = {
-          conversation_id: conversacionId,
-          sender_type: m.saliente ? 'agent' : 'customer',
-          sender_id: null,
-          content_type: tipo,
-          content_text: texto,
-          // Los adjuntos de Zernio piden la llave para bajarse: queda la marca.
-          media_url: null,
-          media_type: adjunto?.mime ?? null,
-          message_id: m.id,
-          status: m.saliente
-            ? ESTADOS_SALIENTE.has(m.estadoEntrega ?? '')
-              ? (m.estadoEntrega as MensajeNuevo['status'])
-              : 'sent'
-            : 'delivered',
-          created_at: new Date(m.creadoEn).toISOString(),
-          reply_to_message_id: null,
-          // No es un eco de ahora: no debe mover el reloj del bot.
-          desde_celular: false,
-        };
-        const nuevo = await o.almacen.insertarMensajeSiNuevo(fila);
-        if (nuevo) r.mensajes++;
-        if (!ultimo || Date.parse(fila.created_at) >= Date.parse(ultimo.en))
-          ultimo = { texto: resumen(texto, tipo), en: fila.created_at };
-        if (
-          !m.saliente &&
-          (!primerEntrante ||
-            Date.parse(fila.created_at) < Date.parse(primerEntrante))
-        )
-          primerEntrante = fila.created_at;
+        return true;
+      });
+
+      if (importables.length > 0 && !conversacionId && !sinIdentidad) {
+        const chat = await chatDeMensaje(
+          o.almacen,
+          inq,
+          identidadDe(conv),
+          { conversacionId: conv.id, cuentaId: conv.cuentaId ?? o.cuentaId },
+          // Si lo crea la historia, nace cerrado: no queda «esperando respuesta».
+          { cerradaEn: new Date(conexion).toISOString() }
+        );
+        if (!chat) {
+          console.warn(
+            `[historial] chat ${conv.id} sin teléfono ni BSUID: se salta`
+          );
+          sinIdentidad = true;
+        } else conversacionId = chat.conversacion.id;
       }
-      if (ultimo) {
+
+      if (conversacionId && importables.length > 0) {
+        const filas = importables.map((m) => filaDe(m, conversacionId!));
+        r.mensajes += await o.almacen.insertarMensajesSiNuevos(filas);
+        let ultimo = filas[0];
+        let primerEntrante: string | null = null;
+        for (const f of filas) {
+          if (Date.parse(f.created_at) >= Date.parse(ultimo.created_at))
+            ultimo = f;
+          if (
+            f.sender_type === 'customer' &&
+            (!primerEntrante ||
+              Date.parse(f.created_at) < Date.parse(primerEntrante))
+          )
+            primerEntrante = f.created_at;
+        }
         await o.almacen.registrarHistoria(conversacionId, {
-          resumen: ultimo.texto,
-          ultimoEn: ultimo.en,
+          resumen: resumen(ultimo.content_text, ultimo.content_type),
+          ultimoEn: ultimo.created_at,
           primerEntranteEn: primerEntrante,
         });
       }

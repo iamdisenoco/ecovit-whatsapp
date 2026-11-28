@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import type { Conversation } from '@/types';
+import { applyInboxFilter, isAwaitingReply } from '@/lib/inbox/inbox-filters';
 import { AlmacenMemoria } from '../webhook/almacen-memoria';
 import { Procesador } from '../webhook/procesar';
 import {
   FuenteHistorialZernio,
   LimiteDeVelocidad,
+  PRESUPUESTO_MS,
+  SinFechaDeConexion,
   importarHistorial,
   leerCursor,
   type ConversacionRemota,
@@ -253,14 +257,19 @@ describe('importarHistorial: con el webhook', () => {
     expect(a.mensajes).toHaveLength(2);
   });
 
-  it('deja al webhook lo reciente posterior a la conexión', async () => {
+  it('solo guarda lo ESTRICTAMENTE anterior a la conexión; lo demás es del webhook', async () => {
     const z = bandeja(1, 0);
-    const reciente = new Date(AHORA - 60_000).toISOString();
-    const viejoPosterior = new Date(AHORA - 3600_000).toISOString();
+    const antes = new Date(Date.parse(CONECTADO) - 1).toISOString();
     z.mensajesRemotos.set('conv-0', [
       mensaje('conv-0', 0),
-      mensaje('conv-0', 1, { creadoEn: viejoPosterior }),
-      mensaje('conv-0', 2, { creadoEn: reciente, saliente: false }),
+      mensaje('conv-0', 1, { creadoEn: antes }),
+      // Justo en la conexión, 20 días después y hace un minuto: del webhook.
+      mensaje('conv-0', 2, { creadoEn: CONECTADO, saliente: false }),
+      mensaje('conv-0', 3, { creadoEn: '2026-11-21T00:00:00.000Z' }),
+      mensaje('conv-0', 4, {
+        creadoEn: new Date(AHORA - 60_000).toISOString(),
+        saliente: false,
+      }),
     ]);
     const a = almacen();
     const r = await importarHistorial({ ...base, almacen: a, fuente: z });
@@ -268,7 +277,40 @@ describe('importarHistorial: con el webhook', () => {
       'wamid.conv-0.0',
       'wamid.conv-0.1',
     ]);
-    expect(r.saltados).toBe(1);
+    expect(r.saltados).toBe(3);
+  });
+
+  it('un mensaje vivo atrasado que llega por webhook despierta al bot', async () => {
+    const z = bandeja(1, 1);
+    const vivo = mensaje('conv-0', 2, {
+      creadoEn: '2026-11-20T00:00:00.000Z',
+      saliente: false,
+    });
+    z.mensajesRemotos.get('conv-0')!.push(vivo);
+    const a = almacen();
+    await importarHistorial({ ...base, almacen: a, fuente: z });
+    const r = await new Procesador(a).procesar([
+      entrante(vivo.id, 'conv-0', telefono(0), vivo.creadoEn),
+    ]);
+    expect(r.repetidos).toBe(0);
+    expect(r.trabajos.map((t) => t.clase)).toEqual(['motores']);
+    expect(a.conversaciones[0].unread_count).toBe(1);
+  });
+
+  it('sin fecha de conexión no importa nada y lo dice sin nombrar al proveedor', async () => {
+    const a = new AlmacenMemoria({
+      accountId: 'cuenta-1',
+      usuarioId: 'usuario-1',
+      conectadoDesde: null,
+    });
+    const z = bandeja(2, 2);
+    const e = await importarHistorial({ ...base, almacen: a, fuente: z }).catch(
+      (x) => x
+    );
+    expect(e).toBeInstanceOf(SinFechaDeConexion);
+    expect(e.message).not.toMatch(/zernio/i);
+    expect(z.pedidosConversaciones).toBe(0);
+    expect(a.mensajes).toHaveLength(0);
   });
 });
 
@@ -333,8 +375,9 @@ describe('importarHistorial: es historia', () => {
       entrante('wamid.vivo', 'conv-0', telefono(0), nuevo),
     ]);
     const c = a.conversaciones[0];
-    c.last_message_at = nuevo;
-    c.last_message_text = 'hola';
+    // Lo puso el webhook, no la prueba.
+    expect(c.last_message_at).toBe(nuevo);
+    expect(c.last_message_text).toBe('hola');
     await importarHistorial({ ...base, almacen: a, fuente: z });
     expect(c.last_message_text).toBe('hola');
     expect(c.last_message_at).toBe(nuevo);
@@ -491,6 +534,146 @@ describe('importarHistorial: cursor y reanudación', () => {
         cursor: '%%%',
       })
     ).rejects.toThrow(/punto de avance/);
+  });
+});
+
+/** La conversación de memoria con la forma que lee la bandeja. */
+function comoBandeja(
+  c: AlmacenMemoria['conversaciones'][number]
+): Conversation {
+  return {
+    ...c,
+    last_reply_at: c.last_reply_at ?? null,
+  } as unknown as Conversation;
+}
+
+describe('importarHistorial: el chat', () => {
+  it('un chat que crea la historia nace cerrado y no queda «esperando»', async () => {
+    // 3 mensajes: el último (n=2) es del cliente, así que abierto esperaría.
+    const z = bandeja(1, 3);
+    const a = almacen();
+    await importarHistorial({ ...base, almacen: a, fuente: z });
+    const c = a.conversaciones[0];
+    expect(c.status).toBe('closed');
+    expect(c.closed_at).toBe(CONECTADO);
+    expect(c.last_reply_at! < c.last_inbound_at!).toBe(true);
+    expect(isAwaitingReply(comoBandeja(c))).toBe(false);
+    expect(applyInboxFilter([comoBandeja(c)], 'waiting', AHORA)).toEqual([]);
+  });
+
+  it('un chat que ya existía no cambia de estado', async () => {
+    const z = bandeja(1, 3);
+    const a = almacen();
+    const { contactoId } = await a.buscarOCrearContacto(a.inquilino, {
+      telefono: telefono(0),
+      waUserId: null,
+      waParentUserId: null,
+      waUsername: null,
+      nombre: 'X',
+    });
+    await a.buscarOCrearConversacion(a.inquilino, contactoId);
+    await importarHistorial({ ...base, almacen: a, fuente: z });
+    expect(a.conversaciones).toHaveLength(1);
+    expect(a.conversaciones[0].status).toBe('open');
+    expect(a.conversaciones[0].closed_at).toBeNull();
+  });
+
+  it('un chat sin mensajes importables no se crea', async () => {
+    const z = bandeja(2, 0);
+    z.mensajesRemotos.set('conv-0', [
+      mensaje('conv-0', 0, { creadoEn: '2026-11-20T00:00:00.000Z' }),
+      mensaje('conv-0', 1, { borrado: true }),
+    ]);
+    const a = almacen();
+    const r = await importarHistorial({ ...base, almacen: a, fuente: z });
+    expect(r.terminado).toBe(true);
+    expect(r.listas).toBe(2);
+    expect(a.contactos).toHaveLength(0);
+    expect(a.conversaciones).toHaveLength(0);
+    expect(a.referencias.size).toBe(0);
+  });
+
+  it('a un chat que ya existía y no tiene nada importable no lo toca', async () => {
+    const z = bandeja(1, 0);
+    z.mensajesRemotos.set('conv-0', [
+      mensaje('conv-0', 0, { creadoEn: '2026-11-20T00:00:00.000Z' }),
+    ]);
+    const a = almacen();
+    await new Procesador(a).procesar([
+      entrante('wamid.vivo', 'conv-0', telefono(0), '2026-11-20T00:00:00.000Z'),
+    ]);
+    const antes = structuredClone(a.conversaciones[0]);
+    await importarHistorial({ ...base, almacen: a, fuente: z });
+    expect(a.conversaciones[0]).toEqual(antes);
+    expect(a.mensajes).toHaveLength(1);
+  });
+});
+
+describe('importarHistorial: robustez y tiempo', () => {
+  it('una fecha ilegible salta ese mensaje y sigue', async () => {
+    const z = bandeja(1, 3);
+    z.mensajesRemotos.get('conv-0')![1].creadoEn = 'no-es-fecha';
+    const a = almacen();
+    const r = await importarHistorial({ ...base, almacen: a, fuente: z });
+    expect(r.terminado).toBe(true);
+    expect(r.saltados).toBe(1);
+    expect(a.mensajes.map((m) => m.message_id).sort()).toEqual([
+      'wamid.conv-0.0',
+      'wamid.conv-0.2',
+    ]);
+  });
+
+  it('cada página de mensajes entra en un solo lote', async () => {
+    const z = bandeja(2, 7);
+    const a = almacen();
+    let sueltos = 0;
+    const original = a.insertarMensajeSiNuevo.bind(a);
+    a.insertarMensajeSiNuevo = async (f) => {
+      sueltos++;
+      return original(f);
+    };
+    await importarHistorial({
+      ...base,
+      almacen: a,
+      fuente: z,
+      mensajesPorPagina: 3,
+    });
+    expect(a.mensajes).toHaveLength(14);
+    expect(sueltos).toBe(0);
+    // 3 páginas (3+3+1) por chat.
+    expect(a.lotes).toBe(6);
+  });
+
+  it('el presupuesto también se mira antes de pedir otra página de chats', async () => {
+    const z = bandeja(3, 1);
+    let reloj = AHORA;
+    const chats = z.conversaciones.bind(z);
+    const mensajes = z.mensajes.bind(z);
+    // La página de chats tarda 10 s y la de mensajes 20 s; el tramo tiene 25 s.
+    z.conversaciones = async (...x) => {
+      reloj += 10_000;
+      return chats(...x);
+    };
+    z.mensajes = async (...x) => {
+      reloj += 20_000;
+      return mensajes(...x);
+    };
+    const r = await importarHistorial({
+      ...base,
+      ahora: () => reloj,
+      almacen: almacen(),
+      fuente: z,
+      conversacionesPorPagina: 1,
+      presupuestoMs: 25_000,
+    });
+    expect(r.terminado).toBe(false);
+    expect(r.listas).toBe(1);
+    // No pidió la segunda página: ya no quedaba tiempo.
+    expect(z.pedidosConversaciones).toBe(1);
+  });
+
+  it('el tramo deja margen bajo los 60 s de Vercel', () => {
+    expect(PRESUPUESTO_MS).toBeLessThanOrEqual(30_000);
   });
 });
 

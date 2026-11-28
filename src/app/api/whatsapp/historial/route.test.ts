@@ -76,6 +76,19 @@ describe('POST /api/whatsapp/historial', () => {
     }
   );
 
+  it('409 claro si falta la fecha de conexión', async () => {
+    const { SinFechaDeConexion } =
+      await import('@/lib/whatsapp/proveedor/historial');
+    h.importar.mockRejectedValue(new SinFechaDeConexion());
+    const r = (await POST(pedido())) as unknown as {
+      status: number;
+      body: { error: string };
+    };
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/fecha en que se conectó/);
+    expect(r.body.error).not.toMatch(/zernio/i);
+  });
+
   it('pasa el cursor y devuelve el tramo', async () => {
     h.importar.mockResolvedValue({
       procesadas: 3,

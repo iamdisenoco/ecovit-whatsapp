@@ -4,6 +4,7 @@ import { supabaseAdmin } from '@/lib/flows/admin-client';
 import {
   ErrorHistorial,
   FuenteHistorialZernio,
+  SinFechaDeConexion,
   importarHistorial,
 } from '@/lib/whatsapp/proveedor/historial';
 import { nombreProveedorOnull } from '@/lib/whatsapp/proveedor/nombre';
@@ -56,6 +57,9 @@ export async function POST(request: Request) {
     });
     return NextResponse.json(r);
   } catch (err) {
+    if (err instanceof SinFechaDeConexion) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
     if (err instanceof ErrorHistorial) {
       return NextResponse.json({ error: err.message }, { status: 502 });
     }
