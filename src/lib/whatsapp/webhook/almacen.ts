@@ -88,8 +88,17 @@ export interface MensajeGuardado {
   content_text: string | null;
 }
 
-/** Cómo quedó un chat al recalcularlo (`recalcularChat`). */
-export type ChatRecalculado = 'recalculado' | 'vacio' | 'borrado';
+/**
+ * Cómo quedó un chat al recalcularlo (`recalcularChat`). `sin_cambios`: ya
+ * estaba bien y no se escribió; `otro_escribio`: cambió entre la lectura y la
+ * escritura (entró un mensaje) y no se pisó.
+ */
+export type ChatRecalculado =
+  | 'recalculado'
+  | 'vacio'
+  | 'borrado'
+  | 'sin_cambios'
+  | 'otro_escribio';
 
 export interface EstadoEntrante {
   wamid: string;
@@ -268,11 +277,29 @@ export interface AlmacenWhatsApp {
     bytes: Uint8Array,
     mime: string
   ): Promise<boolean>;
+  /** `false` si no se pudo anotar (la fila sigue como estaba). */
   actualizarAdjunto(
     mensajeId: string,
     mediaUrl: string | null,
     texto?: string | null
-  ): Promise<void>;
+  ): Promise<boolean>;
+}
+
+/**
+ * ¿El chat ya tiene estos valores? Las fechas se comparan como instantes
+ * (la base devuelve `+00:00`, el código escribe `Z`).
+ */
+export function igualesAlChat(
+  chat: object,
+  valores: Record<string, string | null>
+): boolean {
+  const conv = chat as Record<string, unknown>;
+  return Object.entries(valores).every(([k, v]) => {
+    const actual = conv[k] ?? null;
+    if (v === null || actual === null) return v === actual;
+    if (k.endsWith('_at')) return Date.parse(String(actual)) === Date.parse(v);
+    return actual === v;
+  });
 }
 
 /** Errores que obligan a responder 500 (para que el proveedor reintente). */

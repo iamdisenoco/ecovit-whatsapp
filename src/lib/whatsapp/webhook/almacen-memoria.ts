@@ -14,6 +14,7 @@ import type {
   IdentidadRemitente,
   ReferenciaConversacion,
 } from '../proveedor/tipos';
+import { igualesAlChat } from './almacen';
 import type {
   AlmacenWhatsApp,
   ChatRecalculado,
@@ -72,6 +73,8 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
   flujosPausados: string[] = [];
   cuentaDesconectada = false;
   archivos = new Map<string, { bytes: Uint8Array; mime: string }>();
+  /** Para simular que anotar el adjunto en el mensaje falla. */
+  fallarActualizarAdjunto = false;
   /** Para simular una base caída: el siguiente insert lanza. */
   fallarSiguienteInsert = false;
 
@@ -344,6 +347,7 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
         deHistoria &&
         c.status === 'closed' &&
         !c.assigned_agent_id &&
+        !c.ai_autoreply_disabled &&
         !c.ai_handoff_summary &&
         !this.chatsConAlgoColgado.has(conversacionId)
       ) {
@@ -352,11 +356,15 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
         );
         return 'borrado';
       }
-      c.last_message_text = null;
-      c.last_message_at = c.created_at ?? null;
-      c.first_inbound_at = null;
-      c.last_inbound_at = null;
-      c.last_reply_at = null;
+      const vacio = {
+        last_message_text: null,
+        last_message_at: c.created_at ?? null,
+        first_inbound_at: null,
+        last_inbound_at: null,
+        last_reply_at: null,
+      };
+      if (igualesAlChat(c, vacio)) return 'sin_cambios';
+      Object.assign(c, vacio);
       return 'vacio';
     }
     const primero = propios[0];
@@ -365,20 +373,23 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
     const respuestas = propios.filter(
       (m) => m.sender_type === 'agent' && m.status !== 'failed'
     );
-    c.last_message_text = resumen(ultimo.content_text, ultimo.content_type);
-    c.last_message_at = ultimo.created_at;
-    c.first_inbound_at = entrantes[0]?.created_at ?? null;
-    c.last_inbound_at = entrantes[entrantes.length - 1]?.created_at ?? null;
-    c.last_reply_at = respuestas[respuestas.length - 1]?.created_at ?? null;
-    if (deHistoria) {
-      c.created_at = primero.created_at;
-      if (
+    const nuevo = {
+      last_message_text: resumen(ultimo.content_text, ultimo.content_type),
+      last_message_at: ultimo.created_at,
+      first_inbound_at: entrantes[0]?.created_at ?? null,
+      last_inbound_at: entrantes[entrantes.length - 1]?.created_at ?? null,
+      last_reply_at: respuestas[respuestas.length - 1]?.created_at ?? null,
+      created_at: deHistoria ? primero.created_at : (c.created_at ?? null),
+      closed_at:
+        deHistoria &&
         c.status === 'closed' &&
         c.closed_at &&
         t(c.closed_at) < t(historiaAntesDe)
-      )
-        c.closed_at = ultimo.created_at;
-    }
+          ? ultimo.created_at
+          : (c.closed_at ?? null),
+    };
+    if (igualesAlChat(c, nuevo)) return 'sin_cambios';
+    Object.assign(c, nuevo);
     return 'recalculado';
   }
 
@@ -522,9 +533,11 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
     mediaUrl: string | null,
     texto?: string | null
   ) {
+    if (this.fallarActualizarAdjunto) return false;
     const m = this.mensajes.find((x) => x.id === mensajeId);
-    if (!m) return;
+    if (!m) return false;
     m.media_url = mediaUrl;
     if (texto !== undefined) m.content_text = texto;
+    return true;
   }
 }

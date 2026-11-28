@@ -44,8 +44,10 @@ import {
   type ResumenHistoria,
 } from './almacen';
 import { resumen } from './procesar';
+import { igualesAlChat } from './almacen';
 
 export const BUCKET_ADJUNTOS = 'chat-media';
+
 export const COLUMNA_REFERENCIA = 'proveedor_conversacion_id';
 export const COLUMNA_CUENTA_REFERENCIA = 'proveedor_cuenta_id';
 
@@ -429,14 +431,25 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
     } | null) ?? null;
   }
 
-  /** ¿Hay algo que apunte a este chat y que borrarlo dejaría suelto? */
+  /**
+   * ¿Hay algo que apunte a este chat y que borrarlo dejaría suelto? Las tablas
+   * con RESTRICT (mensajes, reacciones, el bot) ya las frena la base; estas
+   * no: o ponen NULL, o guardan el id sin llave foránea. Si una consulta
+   * falla, se toma como que sí: ante la duda no se borra.
+   */
   private async tieneAlgoColgado(conversacionId: string): Promise<boolean> {
-    for (const tabla of ['ai_usage_log', 'flow_runs', 'notifications']) {
+    const consultas = [
+      ['ai_usage_log', 'conversation_id'],
+      ['flow_runs', 'conversation_id'],
+      ['notifications', 'conversation_id'],
+      ['bitacora', 'entidad_id'],
+      ['avisos', 'datos->>conversacion_id'],
+    ] as const;
+    for (const [tabla, columna] of consultas) {
       const { count, error } = await this.db
         .from(tabla)
         .select('*', { count: 'exact', head: true })
-        .eq('conversation_id', conversacionId);
-      // Si no se puede saber, se toma como que sí: no se borra.
+        .eq(columna, conversacionId);
       if (error || (count ?? 0) > 0) return true;
     }
     return false;
@@ -446,19 +459,28 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
     conversacionId: string,
     historiaAntesDe: string
   ): Promise<ChatRecalculado> {
-    const { data: conv, error } = await this.db
+    const { data, error } = await this.db
       .from('conversations')
       .select(
-        'id, status, assigned_agent_id, ai_handoff_summary, ai_reply_count, created_at, closed_at'
+        'id, status, assigned_agent_id, asignado_por, ai_autoreply_disabled, ai_handoff_summary, ai_reply_count, created_at, closed_at, updated_at, last_message_text, last_message_at, first_inbound_at, last_inbound_at, last_reply_at'
       )
       .eq('id', conversacionId)
       .maybeSingle();
     if (error)
       throw new ErrorAlmacen(`No se pudo leer el chat: ${error.message}`);
-    if (!conv) return 'borrado';
+    if (!data) return 'borrado';
+    const conv = data as Record<string, unknown>;
+    const fecha = (k: string) =>
+      typeof conv[k] === 'string' ? (conv[k] as string) : null;
     const corte = Date.parse(historiaAntesDe);
-    const deHistoria =
-      !!conv.created_at && Date.parse(conv.created_at as string) < corte;
+    const creado = fecha('created_at');
+    const deHistoria = !!creado && Date.parse(creado) < corte;
+    // La guarda de todas las escrituras: si entre la lectura y la escritura
+    // entró un mensaje (o alguien tocó el chat), `updated_at` cambió y no se
+    // pisa nada. Lo nuevo gana.
+    const visto = fecha('updated_at');
+    const conGuarda = <T extends { eq: (c: string, v: unknown) => T; is: (c: string, v: null) => T }>(q: T) =>
+      visto ? q.eq('updated_at', visto) : q.is('updated_at', null);
 
     const ultimo = await this.extremo(conversacionId, false);
     if (!ultimo) {
@@ -466,19 +488,20 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
         deHistoria &&
         conv.status === 'closed' &&
         !conv.assigned_agent_id &&
+        !conv.asignado_por &&
+        !conv.ai_autoreply_disabled &&
         !conv.ai_handoff_summary &&
         !conv.ai_reply_count &&
         !(await this.tieneAlgoColgado(conversacionId))
       ) {
-        // Las condiciones van también en el WHERE; lo demás que cuelgue del
-        // chat (mensajes, reacciones, el bot) es RESTRICT y lo frena la base.
-        const { data: borrado, error: errBorrar } = await this.db
-          .from('conversations')
-          .delete()
-          .eq('id', conversacionId)
-          .eq('status', 'closed')
-          .is('assigned_agent_id', null)
-          .select('id');
+        const { data: borrado, error: errBorrar } = await conGuarda(
+          this.db
+            .from('conversations')
+            .delete()
+            .eq('id', conversacionId)
+            .eq('status', 'closed')
+            .is('assigned_agent_id', null)
+        ).select('id');
         if (!errBorrar && (borrado?.length ?? 0) > 0) return 'borrado';
         if (errBorrar)
           console.error(
@@ -486,21 +509,31 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
             errBorrar.message
           );
       }
-      const { error: errVacio } = await this.db
-        .from('conversations')
-        .update({
-          last_message_text: null,
-          last_message_at: conv.created_at,
-          first_inbound_at: null,
-          last_inbound_at: null,
-          last_reply_at: null,
-        })
-        .eq('id', conversacionId);
+      const vacio = {
+        last_message_text: null,
+        last_message_at: creado,
+        first_inbound_at: null,
+        last_inbound_at: null,
+        last_reply_at: null,
+      };
+      if (igualesAlChat(conv, vacio)) return 'sin_cambios';
+      const { data: hecho, error: errVacio } = await conGuarda(
+        this.db
+          .from('conversations')
+          .update({
+            last_message_text: null,
+            last_message_at: creado,
+            first_inbound_at: null,
+            last_inbound_at: null,
+            last_reply_at: null,
+          })
+          .eq('id', conversacionId)
+      ).select('id');
       if (errVacio)
         throw new ErrorAlmacen(
           `No se pudo dejar vacío el chat: ${errVacio.message}`
         );
-      return 'vacio';
+      return (hecho?.length ?? 0) > 0 ? 'vacio' : 'otro_escribio';
     }
 
     const [primero, primerEntrante, ultimoEntrante, ultimaRespuesta] =
@@ -510,45 +543,49 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
         this.extremo(conversacionId, false, 'entrante'),
         this.extremo(conversacionId, false, 'respuesta'),
       ]);
+    // Lo creó la historia: sus fechas reales. El cierre, solo si sigue
+    // cerrado desde la historia (nadie lo cerró después). Sin tocar `status`:
+    // `stamp_conversation_closed_at` no corre.
+    const cierre = fecha('closed_at');
+    const nuevoCreado = deHistoria && primero ? primero.created_at : creado;
+    const nuevoCierre =
+      deHistoria &&
+      conv.status === 'closed' &&
+      cierre &&
+      Date.parse(cierre) < corte
+        ? ultimo.created_at
+        : cierre;
+    const nuevo = {
+      last_message_text: resumen(ultimo.content_text, ultimo.content_type),
+      last_message_at: ultimo.created_at,
+      first_inbound_at: primerEntrante?.created_at ?? null,
+      last_inbound_at: ultimoEntrante?.created_at ?? null,
+      last_reply_at: ultimaRespuesta?.created_at ?? null,
+      created_at: nuevoCreado,
+      closed_at: nuevoCierre,
+    };
+    if (igualesAlChat(conv, nuevo)) return 'sin_cambios';
     // Directo a la tabla: los disparadores de `messages` (GREATEST) no corren
     // con un UPDATE de `conversations`, así que estas fechas sí pueden bajar.
-    const { error: errCambio } = await this.db
-      .from('conversations')
-      .update({
-        last_message_text: resumen(ultimo.content_text, ultimo.content_type),
-        last_message_at: ultimo.created_at,
-        first_inbound_at: primerEntrante?.created_at ?? null,
-        last_inbound_at: ultimoEntrante?.created_at ?? null,
-        last_reply_at: ultimaRespuesta?.created_at ?? null,
-      })
-      .eq('id', conversacionId);
+    const { data: hecho, error: errCambio } = await conGuarda(
+      this.db
+        .from('conversations')
+        .update({
+          last_message_text: nuevo.last_message_text,
+          last_message_at: nuevo.last_message_at,
+          first_inbound_at: nuevo.first_inbound_at,
+          last_inbound_at: nuevo.last_inbound_at,
+          last_reply_at: nuevo.last_reply_at,
+          created_at: nuevo.created_at,
+          closed_at: nuevo.closed_at,
+        })
+        .eq('id', conversacionId)
+    ).select('id');
     if (errCambio)
       throw new ErrorAlmacen(
         `No se pudo recalcular el chat: ${errCambio.message}`
       );
-    if (!deHistoria || !primero) return 'recalculado';
-    // Lo creó la historia: sus fechas reales. Sin tocar `status`, así
-    // `stamp_conversation_closed_at` no corre; el cierre solo si sigue cerrado
-    // desde la historia (nadie lo cerró después).
-    const { error: errCreado } = await this.db
-      .from('conversations')
-      .update({ created_at: primero.created_at })
-      .eq('id', conversacionId);
-    if (errCreado)
-      throw new ErrorAlmacen(
-        `No se pudo corregir la fecha del chat: ${errCreado.message}`
-      );
-    const { error: errCierre } = await this.db
-      .from('conversations')
-      .update({ closed_at: ultimo.created_at })
-      .eq('id', conversacionId)
-      .eq('status', 'closed')
-      .lt('closed_at', new Date(corte).toISOString());
-    if (errCierre)
-      throw new ErrorAlmacen(
-        `No se pudo corregir el cierre del chat: ${errCierre.message}`
-      );
-    return 'recalculado';
+    return (hecho?.length ?? 0) > 0 ? 'recalculado' : 'otro_escribio';
   }
 
   async buscarMensajePorWamid(
@@ -849,17 +886,19 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
     mensajeId: string,
     mediaUrl: string | null,
     texto?: string | null
-  ): Promise<void> {
+  ): Promise<boolean> {
     const cambios: Record<string, string | null> = { media_url: mediaUrl };
     if (texto !== undefined) cambios.content_text = texto;
-    const { error } = await this.dbLento
+    const { data, error } = await this.dbLento
       .from('messages')
       .update(cambios)
-      .eq('id', mensajeId);
+      .eq('id', mensajeId)
+      .select('id');
     if (error)
       console.error(
         '[webhook] no se pudo anotar el adjunto en el mensaje:',
         error.message
       );
+    return !error && (data?.length ?? 0) > 0;
   }
 }

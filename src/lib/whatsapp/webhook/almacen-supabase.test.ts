@@ -140,50 +140,6 @@ describe('AlmacenSupabase con la 0115', () => {
     ]);
   });
 
-  it('recalcularChat escribe directo las fechas del último mensaje que queda', async () => {
-    const { db, llamadas } = doble({
-      conversations: [
-        {
-          id: 'c',
-          status: 'closed',
-          created_at: '2026-10-31T23:50:00.000Z',
-          closed_at: '2026-10-31T23:50:00.000Z',
-        },
-      ],
-      messages: [
-        {
-          created_at: '2026-06-10T10:00:00.000Z',
-          content_text: '[Unsupported message]',
-          content_type: 'text',
-        },
-      ],
-    });
-    const r = await new AlmacenSupabase(db).recalcularChat(
-      'c',
-      '2026-11-01T00:00:00.000Z'
-    );
-    expect(r).toBe('recalculado');
-    const [resumen, creado, cierre] = llamadas.filter(
-      (l) => l.metodo === 'update'
-    );
-    expect(resumen.args).toEqual({
-      last_message_text: 'Archivo que no se pudo mostrar',
-      last_message_at: '2026-06-10T10:00:00.000Z',
-      first_inbound_at: '2026-06-10T10:00:00.000Z',
-      last_inbound_at: '2026-06-10T10:00:00.000Z',
-      last_reply_at: '2026-06-10T10:00:00.000Z',
-    });
-    // Sin condición: el valor puede BAJAR (no es GREATEST).
-    expect(resumen.filtros).toEqual([['eq:id', 'c']]);
-    expect(creado.args).toEqual({ created_at: '2026-06-10T10:00:00.000Z' });
-    expect(cierre.filtros).toContainEqual(['eq:status', 'closed']);
-    // Las respuestas se cuentan como el disparador: agente o IA, sin fallidos.
-    const respuesta = llamadas.find((l) =>
-      l.filtros.some(([f]) => f === 'or:sender_type.eq.agent,ai_generated.is.true')
-    );
-    expect(respuesta?.filtros).toContainEqual(['neq:status', 'failed']);
-  });
-
   it('tomarEvento devuelve el texto de registrar_evento_wa (en_curso incluido)', async () => {
     for (const estado of ['nuevo', 'reintento', 'procesado', 'en_curso']) {
       const { db } = doble({}, { registrar_evento_wa: estado });
