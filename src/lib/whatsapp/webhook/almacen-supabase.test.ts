@@ -40,7 +40,7 @@ function doble(
         ll.filtros.push([`${m}:${c}`, v]);
         return b;
       };
-      for (const m of ['eq', 'is', 'in', 'gte']) b[m] = filtro(m);
+      for (const m of ['eq', 'is', 'in', 'gte', 'gt', 'lt']) b[m] = filtro(m);
       b.select = (c?: string) => {
         ll.columnas = c;
         return b;
@@ -53,6 +53,12 @@ function doble(
         ll.tope = n;
         return b;
       };
+      b.insert = (row: unknown) => {
+        ll.metodo = 'insert';
+        ll.args = row;
+        return b;
+      };
+      b.single = async () => ({ data: { id: 'nueva' }, error: null });
       b.update = (row: unknown) => {
         ll.metodo = 'update';
         ll.args = row;
@@ -74,6 +80,45 @@ function doble(
 }
 
 describe('AlmacenSupabase con la 0115', () => {
+  it('un chat que crea la historia se inserta cerrado y en sus fechas reales', async () => {
+    const { db, llamadas } = doble({ conversations: [] });
+    await new AlmacenSupabase(db).buscarOCrearConversacion(
+      { accountId: 'a', usuarioId: 'u', conectadoDesde: null },
+      'contacto',
+      {
+        creadaEn: '2026-06-03T10:00:00.000Z',
+        cerradaEn: '2026-06-05T16:00:00.000Z',
+      }
+    );
+    const insert = llamadas.find((l) => l.metodo === 'insert');
+    expect(insert?.args).toMatchObject({
+      status: 'closed',
+      created_at: '2026-06-03T10:00:00.000Z',
+      closed_at: '2026-06-05T16:00:00.000Z',
+    });
+  });
+
+  it('ajustarFechasHistoria solo corre las fechas hacia afuera y no toca un chat reabierto', async () => {
+    const { db, llamadas } = doble({});
+    await new AlmacenSupabase(db).ajustarFechasHistoria(
+      'c',
+      '2026-06-01T00:00:00.000Z',
+      '2026-06-09T00:00:00.000Z'
+    );
+    const [creado, cerrado] = llamadas.filter((l) => l.metodo === 'update');
+    expect(creado.args).toEqual({ created_at: '2026-06-01T00:00:00.000Z' });
+    expect(creado.filtros).toContainEqual([
+      'gt:created_at',
+      '2026-06-01T00:00:00.000Z',
+    ]);
+    expect(cerrado.args).toEqual({ closed_at: '2026-06-09T00:00:00.000Z' });
+    expect(cerrado.filtros).toContainEqual(['eq:status', 'closed']);
+    expect(cerrado.filtros).toContainEqual([
+      'lt:closed_at',
+      '2026-06-09T00:00:00.000Z',
+    ]);
+  });
+
   it('tomarEvento devuelve el texto de registrar_evento_wa (en_curso incluido)', async () => {
     for (const estado of ['nuevo', 'reintento', 'procesado', 'en_curso']) {
       const { db } = doble({}, { registrar_evento_wa: estado });

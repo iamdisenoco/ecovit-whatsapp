@@ -35,6 +35,8 @@ import {
   type EstadoEvento,
   type Inquilino,
   type MensajeNuevo,
+  type OpcionesConversacionNueva,
+  type ResumenHistoria,
 } from './almacen';
 
 export const BUCKET_ADJUNTOS = 'chat-media';
@@ -222,7 +224,8 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
 
   async buscarOCrearConversacion(
     inq: Inquilino,
-    contactoId: string
+    contactoId: string,
+    nueva?: OpcionesConversacionNueva
   ): Promise<{ conversacion: ConversacionFila; creada: boolean }> {
     const existente = await this.conversacionDe(inq.accountId, contactoId);
     if (existente) return { conversacion: existente, creada: false };
@@ -234,6 +237,12 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
         account_id: inq.accountId,
         user_id: inq.usuarioId,
         contact_id: contactoId,
+        // `stamp_conversation_closed_at` respeta el `closed_at` que viene.
+        ...(nueva?.cerradaEn
+          ? { status: 'closed', closed_at: nueva.cerradaEn }
+          : {}),
+        // Ningún disparador de `conversations` pisa `created_at` (0110–0115).
+        ...(nueva?.creadaEn ? { created_at: nueva.creadaEn } : {}),
       })
       .select(COLUMNAS_CONVERSACION)
       .single();
@@ -301,6 +310,25 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
       );
     }
     return { id: data[0].id as string };
+  }
+
+  async insertarMensajesSiNuevos(filas: MensajeNuevo[]): Promise<number> {
+    if (filas.length === 0) return 0;
+    // Un solo upsert con ON CONFLICT DO NOTHING: `.select()` devuelve solo
+    // las filas que entraron. Sin `applyPendingMessageStatuses`: es historia
+    // y trae su propio estado de entrega.
+    const { data, error } = await this.db
+      .from('messages')
+      .upsert(filas, {
+        onConflict: 'conversation_id,message_id',
+        ignoreDuplicates: true,
+      })
+      .select('id');
+    if (error)
+      throw new ErrorAlmacen(
+        `No se pudieron guardar los mensajes: ${error.message}`
+      );
+    return data?.length ?? 0;
   }
 
   async buscarMensajePorWamid(
@@ -437,6 +465,67 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
       console.error(
         '[webhook] no se pudo actualizar el resumen de la conversación:',
         error.message
+      );
+  }
+
+  async registrarHistoria(
+    conversacionId: string,
+    h: ResumenHistoria
+  ): Promise<void> {
+    // Sin `unread_count`, sin reabrir y sin `updated_at` a mano: es historia.
+    // `last_inbound_at` lo mueve el disparador de `messages` con la fecha
+    // original (GREATEST), así que no revive la ventana de 24 h.
+    const ultimoEn = new Date(h.ultimoEn).toISOString();
+    const { error } = await this.db
+      .from('conversations')
+      .update({ last_message_text: h.resumen, last_message_at: ultimoEn })
+      .eq('id', conversacionId)
+      .or(`last_message_at.is.null,last_message_at.lt.${ultimoEn}`);
+    if (error)
+      throw new ErrorAlmacen(
+        `No se pudo poner el resumen de la historia: ${error.message}`
+      );
+    if (!h.primerEntranteEn) return;
+    // Así el primer mensaje que llegue después no cuenta como «primer
+    // entrante» de un contacto que ya tenía historia.
+    const { error: errPrimero } = await this.db
+      .from('conversations')
+      .update({ first_inbound_at: new Date(h.primerEntranteEn).toISOString() })
+      .eq('id', conversacionId)
+      .is('first_inbound_at', null);
+    if (errPrimero)
+      throw new ErrorAlmacen(
+        `No se pudo poner el primer entrante de la historia: ${errPrimero.message}`
+      );
+  }
+
+  async ajustarFechasHistoria(
+    conversacionId: string,
+    desde: string,
+    hasta: string
+  ): Promise<void> {
+    const d = new Date(desde).toISOString();
+    const h = new Date(hasta).toISOString();
+    const { error } = await this.db
+      .from('conversations')
+      .update({ created_at: d })
+      .eq('id', conversacionId)
+      .gt('created_at', d);
+    if (error)
+      throw new ErrorAlmacen(
+        `No se pudo ajustar la fecha del chat: ${error.message}`
+      );
+    // `stamp_conversation_closed_at` solo corre con UPDATE OF status: este no
+    // lo toca. Si alguien lo reabrió, se deja.
+    const { error: errCierre } = await this.db
+      .from('conversations')
+      .update({ closed_at: h })
+      .eq('id', conversacionId)
+      .eq('status', 'closed')
+      .lt('closed_at', h);
+    if (errCierre)
+      throw new ErrorAlmacen(
+        `No se pudo ajustar el cierre del chat: ${errCierre.message}`
       );
   }
 

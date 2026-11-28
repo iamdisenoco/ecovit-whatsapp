@@ -63,6 +63,23 @@ export interface MensajeNuevo {
   desde_celular: boolean;
 }
 
+/** Cómo nace un chat si hay que crearlo. Si ya existía, no se toca. */
+export interface OpcionesConversacionNueva {
+  /** Nace cerrado en esa fecha (la historia: no queda «esperando respuesta»). */
+  cerradaEn?: string;
+  /** Su `created_at`: la historia lo pone en la fecha de su primer mensaje. */
+  creadaEn?: string;
+}
+
+export interface ResumenHistoria {
+  /** Texto del último mensaje de la tanda (o `[tipo]`). */
+  resumen: string;
+  /** Fecha ORIGINAL de ese mensaje. */
+  ultimoEn: string;
+  /** Fecha original del primer mensaje del cliente en la tanda, si hubo. */
+  primerEntranteEn: string | null;
+}
+
 export interface EstadoEntrante {
   wamid: string;
   status: 'sent' | 'delivered' | 'read' | 'failed';
@@ -101,7 +118,8 @@ export interface AlmacenWhatsApp {
   ): Promise<{ contactoId: string; creado: boolean }>;
   buscarOCrearConversacion(
     inquilino: Inquilino,
-    contactoId: string
+    contactoId: string,
+    nueva?: OpcionesConversacionNueva
   ): Promise<{ conversacion: ConversacionFila; creada: boolean }>;
 
   /** Guarda la conversación (y la cuenta) del proveedor para poder contestar. */
@@ -112,6 +130,12 @@ export interface AlmacenWhatsApp {
 
   /** Inserta si no existe (conversation_id, message_id). `null` = ya estaba. */
   insertarMensajeSiNuevo(fila: MensajeNuevo): Promise<{ id: string } | null>;
+
+  /**
+   * Lo mismo en lote (la historia): un solo viaje por página. Devuelve cuántas
+   * filas entraron de verdad; las repetidas no cuentan.
+   */
+  insertarMensajesSiNuevos(filas: MensajeNuevo[]): Promise<number>;
 
   /** Id interno de un mensaje por su wamid, dentro de la conversación. */
   buscarMensajePorWamid(
@@ -145,6 +169,28 @@ export interface AlmacenWhatsApp {
   ): Promise<{ primerEntrante: boolean }>;
 
   registrarSaliente(conversacionId: string, resumen: string): Promise<void>;
+
+  /**
+   * La historia importada (`proveedor/historial.ts`): pone el resumen y la fecha
+   * del último mensaje solo si son más nuevos que lo que ya hay, y el primer
+   * entrante solo si no había. No sube no leídos, no reabre, no toca al bot.
+   */
+  registrarHistoria(
+    conversacionId: string,
+    historia: ResumenHistoria
+  ): Promise<void>;
+
+  /**
+   * Solo para un chat que CREÓ la historia: lleva `created_at` hacia atrás y
+   * `closed_at` hacia adelante si `desde`/`hasta` son más extremos. Así el
+   * tablero de la dirección lo cuenta en sus fechas reales. No reabre ni
+   * toca un chat que alguien ya reabrió.
+   */
+  ajustarFechasHistoria(
+    conversacionId: string,
+    desde: string,
+    hasta: string
+  ): Promise<void>;
 
   /** Aplica un estado sin retroceder; si la fila todavía no existe, lo deja pendiente. */
   aplicarEstado(accountId: string, estado: EstadoEntrante): Promise<void>;

@@ -24,6 +24,7 @@ import {
   type ConversacionFila,
   type Inquilino,
   type MensajeNuevo,
+  type OpcionesConversacionNueva,
 } from './almacen';
 import {
   MOTIVO_CELULAR,
@@ -70,7 +71,9 @@ function tieneIdentidad(id: IdentidadRemitente): boolean {
   return !!id.telefono || !!id.waUserId;
 }
 
-function contentTypeDe(adjunto: AdjuntoEntrante | undefined): ContentType {
+export function contentTypeDe(
+  adjunto: AdjuntoEntrante | undefined
+): ContentType {
   if (!adjunto) return 'text';
   switch (adjunto.tipo) {
     case 'image':
@@ -87,8 +90,63 @@ function contentTypeDe(adjunto: AdjuntoEntrante | undefined): ContentType {
   }
 }
 
-function resumen(texto: string | null, tipo: ContentType): string {
+export function resumen(texto: string | null, tipo: ContentType): string {
   return texto?.trim() ? texto : `[${tipo}]`;
+}
+
+/**
+ * El chat de un mensaje: primero el que ya tiene guardada la conversación del
+ * proveedor (así un eco con BSUID cae en el chat de un contacto guardado por
+ * teléfono), después por BSUID o teléfono del contacto. Lo usan el webhook y el
+ * importador del historial (`proveedor/historial.ts`).
+ */
+export async function chatDeMensaje(
+  almacen: AlmacenWhatsApp,
+  inq: Inquilino,
+  identidad: IdentidadRemitente,
+  referencia: ReferenciaConversacion,
+  nueva?: OpcionesConversacionNueva
+): Promise<{
+  conversacion: ConversacionFila;
+  contactoId: string;
+  contactoCreado: boolean;
+  /** `true` si este llamado creó la conversación. */
+  conversacionCreada: boolean;
+} | null> {
+  if (referencia.conversacionId) {
+    const porReferencia = await almacen.buscarConversacionPorReferencia(
+      inq,
+      referencia
+    );
+    if (porReferencia) {
+      return {
+        conversacion: porReferencia,
+        contactoId: porReferencia.contact_id,
+        contactoCreado: false,
+        conversacionCreada: false,
+      };
+    }
+  }
+  // Sin teléfono ni BSUID no se crea un contacto vacío.
+  if (!tieneIdentidad(identidad)) return null;
+  const { contactoId, creado } = await almacen.buscarOCrearContacto(
+    inq,
+    identidad
+  );
+  const { conversacion, creada } = await almacen.buscarOCrearConversacion(
+    inq,
+    contactoId,
+    nueva
+  );
+  if (referencia.conversacionId) {
+    await almacen.guardarReferencia(conversacion.id, referencia);
+  }
+  return {
+    conversacion,
+    contactoId,
+    contactoCreado: creado,
+    conversacionCreada: creada,
+  };
 }
 
 export class Procesador {
@@ -177,47 +235,12 @@ export class Procesador {
     return resultado;
   }
 
-  /**
-   * El chat de este mensaje: primero el que ya tiene guardada la conversación
-   * del proveedor (así un eco con BSUID cae en el chat de un contacto guardado
-   * por teléfono), después por BSUID o teléfono del contacto.
-   */
-  private async chatDe(
+  private chatDe(
     inq: Inquilino,
     identidad: IdentidadRemitente,
     referencia: ReferenciaConversacion
-  ): Promise<{
-    conversacion: ConversacionFila;
-    contactoId: string;
-    contactoCreado: boolean;
-  } | null> {
-    if (referencia.conversacionId) {
-      const porReferencia = await this.almacen.buscarConversacionPorReferencia(
-        inq,
-        referencia
-      );
-      if (porReferencia) {
-        return {
-          conversacion: porReferencia,
-          contactoId: porReferencia.contact_id,
-          contactoCreado: false,
-        };
-      }
-    }
-    // Sin teléfono ni BSUID no se crea un contacto vacío.
-    if (!tieneIdentidad(identidad)) return null;
-    const { contactoId, creado } = await this.almacen.buscarOCrearContacto(
-      inq,
-      identidad
-    );
-    const { conversacion } = await this.almacen.buscarOCrearConversacion(
-      inq,
-      contactoId
-    );
-    if (referencia.conversacionId) {
-      await this.almacen.guardarReferencia(conversacion.id, referencia);
-    }
-    return { conversacion, contactoId, contactoCreado: creado };
+  ) {
+    return chatDeMensaje(this.almacen, inq, identidad, referencia);
   }
 
   /** `false` si el mensaje ya estaba (repetido por wamid). */

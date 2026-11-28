@@ -24,7 +24,7 @@ describe('la fábrica lee WHATSAPP_PROVEEDOR', () => {
   it('sin la variable o con otro valor, lanza (el webhook responde 500 y el proveedor reintenta)', () => {
     expect(() => nombreProveedor({})).toThrow(ErrorConfiguracion);
     expect(() => nombreProveedor({ WHATSAPP_PROVEEDOR: 'twilio' })).toThrow(
-      /no es válido/
+      /mal configurada/
     );
   });
 

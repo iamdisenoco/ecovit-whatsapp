@@ -86,12 +86,12 @@ export class ProveedorSimulado implements ProveedorWhatsApp {
   ): ResultadoEnvio {
     if (texto.includes('[falla-dudosa]')) {
       throw new ErrorProveedor(
-        'Simulado: 503 de Zernio (no se sabe si salió).',
+        'Simulado: 503 del proveedor (no se sabe si salió).',
         { dudoso: true, estadoHttp: 503 }
       );
     }
     if (texto.includes('[falla]')) {
-      throw new ErrorProveedor('Simulado: 400 de Zernio.', {
+      throw new ErrorProveedor('Simulado: 400 del proveedor.', {
         dudoso: false,
         estadoHttp: 400,
       });
