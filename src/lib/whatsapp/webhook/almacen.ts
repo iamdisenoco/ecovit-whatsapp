@@ -116,6 +116,16 @@ export interface AlmacenWhatsApp {
     inquilino: Inquilino,
     identidad: IdentidadRemitente
   ): Promise<{ contactoId: string; creado: boolean }>;
+  /**
+   * El nombre de la agenda del número para los contactos que YA existen
+   * (por teléfono). Nunca crea uno y nunca pisa un nombre puesto a mano: la
+   * regla es `nombreParaCompletar` (`contactos-supabase.ts`). Devuelve cuántos
+   * nombres se pusieron.
+   */
+  completarNombres(
+    inquilino: Inquilino,
+    pares: Array<{ telefono: string; nombre: string }>
+  ): Promise<number>;
   buscarOCrearConversacion(
     inquilino: Inquilino,
     contactoId: string,

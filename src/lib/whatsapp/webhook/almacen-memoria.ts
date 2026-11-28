@@ -25,6 +25,8 @@ import type {
   OpcionesConversacionNueva,
   ResumenHistoria,
 } from './almacen';
+import { nombreParaCompletar } from './contactos-supabase';
+import { phonesMatch } from '../phone-utils';
 
 /** La ventana de conciliación de la base (`almacen-supabase.ts`). */
 const VENTANA_CONCILIAR_MS = 15 * 60 * 1000;
@@ -128,6 +130,40 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
       nombre: identidad.nombre,
     });
     return { contactoId: id, creado: true };
+  }
+
+  /** Pedidos a `completarNombres` (para contar viajes en las pruebas). */
+  pedidosCompletarNombres = 0;
+
+  async completarNombres(
+    _inq: Inquilino,
+    pares: Array<{ telefono: string; nombre: string }>
+  ) {
+    this.pedidosCompletarNombres++;
+    let completados = 0;
+    for (const p of pares) {
+      const digitos = p.telefono.replace(/\D/g, '');
+      if (!digitos) continue;
+      const c =
+        this.contactos.find((x) => x.telefono === digitos) ??
+        this.contactos.find((x) => x.telefono && phonesMatch(x.telefono, digitos));
+      if (!c) continue;
+      const nombre = nombreParaCompletar(
+        {
+          id: c.id,
+          phone: c.telefono,
+          name: c.nombre,
+          wa_user_id: c.waUserId,
+          wa_parent_user_id: null,
+          wa_username: null,
+        },
+        p.nombre
+      );
+      if (!nombre) continue;
+      c.nombre = nombre;
+      completados++;
+    }
+    return completados;
   }
 
   async buscarOCrearConversacion(

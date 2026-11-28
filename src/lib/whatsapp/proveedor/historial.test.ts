@@ -10,6 +10,7 @@ import {
   SinFechaDeConexion,
   importarHistorial,
   leerCursor,
+  type ContactoRemoto,
   type ConversacionRemota,
   type FuenteHistorial,
   type MensajeRemoto,
@@ -25,8 +26,11 @@ const AHORA = Date.parse('2026-11-28T12:00:00.000Z');
 class ZernioDoble implements FuenteHistorial {
   conversacionesRemotas: ConversacionRemota[] = [];
   mensajesRemotos = new Map<string, MensajeRemoto[]>();
+  /** La agenda del número; se pagina por `skip`, como el proveedor. */
+  contactosRemotos: ContactoRemoto[] = [];
   pedidosConversaciones = 0;
   pedidosMensajes = 0;
+  pedidosContactos = 0;
   /** Los próximos N pedidos responden 429 con esta espera. */
   limitar: { veces: number; esperaMs: number } | null = null;
 
@@ -63,6 +67,17 @@ class ZernioDoble implements FuenteHistorial {
     return {
       items: todos.slice(desde, fin),
       siguiente: fin < todos.length ? String(fin) : null,
+    };
+  }
+
+  async contactos(_c: string, salto: number, limite: number) {
+    this.revisarLimite();
+    this.pedidosContactos++;
+    const items = this.contactosRemotos.slice(salto, salto + limite);
+    const fin = salto + limite;
+    return {
+      items,
+      siguiente: fin < this.contactosRemotos.length ? fin : null,
     };
   }
 }

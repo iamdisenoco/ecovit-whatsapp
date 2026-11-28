@@ -25,7 +25,10 @@ import type {
   IdentidadRemitente,
   ReferenciaConversacion,
 } from '../proveedor/tipos';
-import { buscarOCrearContactoSupabase } from './contactos-supabase';
+import {
+  buscarOCrearContactoSupabase,
+  completarNombresSupabase,
+} from './contactos-supabase';
 import {
   ErrorAlmacen,
   type AlmacenWhatsApp,
@@ -201,6 +204,13 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
     identidad: IdentidadRemitente
   ): Promise<{ contactoId: string; creado: boolean }> {
     return buscarOCrearContactoSupabase(this.db, inq, identidad);
+  }
+
+  async completarNombres(
+    inq: Inquilino,
+    pares: Array<{ telefono: string; nombre: string }>
+  ): Promise<number> {
+    return completarNombresSupabase(this.db, inq, pares);
   }
 
   private async conversacionDe(
