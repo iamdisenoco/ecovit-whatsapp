@@ -22,7 +22,11 @@ const TEL = '573001112233';
 
 function armar(
   remoto: ContactoRemoto | null | (() => never),
-  contactos: Array<{ telefono: string; nombre: string }> = []
+  contactos: Array<{
+    telefono: string;
+    nombre: string;
+    nombreOrigen?: 'agenda' | 'persona' | null;
+  }> = []
 ) {
   const almacen = new AlmacenMemoria();
   contactos.forEach((c, i) =>
@@ -196,5 +200,42 @@ describe('contact.updated por el webhook', () => {
     );
     expect(await r.json()).toMatchObject({ ignorados: 1 });
     expect(almacen.contactos[0].nombre).toBe('');
+  });
+
+  describe('el origen del nombre (Jon, 28-nov)', () => {
+    it('renombre en la agenda: si lo puso la agenda, se actualiza', async () => {
+      const { almacen, deps } = armar(ANA, [
+        { telefono: TEL, nombre: 'Ana vieja', nombreOrigen: 'agenda' },
+      ]);
+      const r = await manejarWebhook(
+        pedido(contactoActualizado('e1', 'k1')),
+        deps
+      );
+      expect(r.status).toBe(200);
+      expect(almacen.contactos[0]).toMatchObject({
+        nombre: 'Ana Ruiz',
+        nombreOrigen: 'agenda',
+      });
+    });
+
+    it('si lo escribió una persona, no se toca aunque la agenda cambie', async () => {
+      const { almacen, deps } = armar(ANA, [
+        { telefono: TEL, nombre: 'Ana vieja', nombreOrigen: 'persona' },
+      ]);
+      await manejarWebhook(pedido(contactoActualizado('e1', 'k1')), deps);
+      expect(almacen.contactos[0]).toMatchObject({
+        nombre: 'Ana vieja',
+        nombreOrigen: 'persona',
+      });
+    });
+
+    it('el relleno se completa y queda de la agenda', async () => {
+      const { almacen, deps } = armar(ANA, [{ telefono: TEL, nombre: TEL }]);
+      await manejarWebhook(pedido(contactoActualizado('e1', 'k1')), deps);
+      expect(almacen.contactos[0]).toMatchObject({
+        nombre: 'Ana Ruiz',
+        nombreOrigen: 'agenda',
+      });
+    });
   });
 });

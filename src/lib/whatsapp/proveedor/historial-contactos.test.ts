@@ -1,10 +1,12 @@
 // La fase «contactos» del historial: la agenda del número completa los nombres
 // de los contactos que YA existen en la app. Cada prueba lleva su testigo en el
 // informe del PR (el defecto que se inyectó para verla en rojo).
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { AlmacenMemoria } from '../webhook/almacen-memoria';
 import {
+  columnaOrigen,
   completarNombresSupabase,
+  nombreParaCompletar,
   nombreUtil,
 } from '../webhook/contactos-supabase';
 import type { Inquilino } from '../webhook/almacen';
@@ -231,6 +233,40 @@ describe('historial, fase contactos: la regla del nombre', () => {
   });
 });
 
+describe('historial, fase contactos: el origen del nombre', () => {
+  it('renombre de la agenda actualiza; de una persona no; el relleno se completa', async () => {
+    const z = agenda(3, (i) => `Nuevo ${i}`);
+    const a = almacen([
+      { telefono: tel(0), nombre: 'Viejo 0' },
+      { telefono: tel(1), nombre: 'Puesto a mano' },
+      { telefono: tel(2), nombre: tel(2) },
+    ]);
+    a.contactos[0].nombreOrigen = 'agenda';
+    a.contactos[1].nombreOrigen = 'persona';
+    const r = await importarHistorial({ ...base, almacen: a, fuente: z });
+    expect(r.nombres).toBe(2);
+    expect(a.contactos.map((c) => [c.nombre, c.nombreOrigen ?? null])).toEqual([
+      ['Nuevo 0', 'agenda'],
+      ['Puesto a mano', 'persona'],
+      ['Nuevo 2', 'agenda'],
+    ]);
+  });
+
+  it('el nombre del perfil de WhatsApp (un mensaje) no pisa el de la agenda', () => {
+    const existente = {
+      id: 'c1',
+      phone: tel(0),
+      name: 'Ana de la agenda',
+      nombre_origen: 'agenda' as const,
+      wa_user_id: null,
+      wa_parent_user_id: null,
+      wa_username: null,
+    };
+    expect(nombreParaCompletar(existente, 'Perfil', false)).toBeNull();
+    expect(nombreParaCompletar(existente, 'Agenda nueva')).toBe('Agenda nueva');
+  });
+});
+
 describe('historial, fase contactos: el 429', () => {
   it('uno corto se espera; uno largo corta, dice cuánto y retoma el mismo skip', async () => {
     const esperas: number[] = [];
@@ -411,7 +447,10 @@ describe('FuenteHistorialZernio: la agenda', () => {
 });
 
 /** Un doble mínimo del cliente de Supabase: registra la cadena de cada consulta. */
-function dbDoble(filas: Array<Record<string, unknown>>) {
+function dbDoble(
+  filas: Array<Record<string, unknown>>,
+  o: { sinColumnaOrigen?: boolean } = {}
+) {
   const llamadas: Array<{ op: string; args: unknown[] }[]> = [];
   const db = {
     from(tabla: string) {
@@ -428,25 +467,47 @@ function dbDoble(filas: Array<Record<string, unknown>>) {
           return q;
         };
       q.then = (ok: (v: unknown) => unknown) => {
+        // Como la base antes de la migración 132: nombrar la columna da 42703.
+        const nombraOrigen = cadena.some((c) =>
+          JSON.stringify(c.args).includes('nombre_origen')
+        );
+        if (o.sinColumnaOrigen && nombraOrigen)
+          return Promise.resolve({
+            data: null,
+            error: {
+              code: '42703',
+              message: 'column contacts.nombre_origen does not exist',
+            },
+          }).then(ok);
         if (!esUpdate) {
-          // Como la base: solo las filas cuyo `phone_normalized` está en el in().
+          // Como la base: solo las filas cuyo `phone_normalized` está en el
+          // in(), y solo las columnas pedidas (el origen, si se pidió).
           const en = cadena.find((c) => c.op === 'in')?.args[1] as string[];
-          const data = filas.filter((f) =>
-            (en ?? []).includes(String(f.phone).replace(/\D/g, ''))
-          );
+          const data = filas
+            .filter((f) =>
+              (en ?? []).includes(String(f.phone).replace(/\D/g, ''))
+            )
+            .map((f) => {
+              const { nombre_origen, ...resto } = f;
+              return nombraOrigen
+                ? { ...resto, nombre_origen: nombre_origen ?? null }
+                : resto;
+            });
           return Promise.resolve({ data, error: null }).then(ok);
         }
-        // El update condicional: solo «cambia» si el nombre leído sigue igual.
+        // El update condicional: como PostgREST, cada eq/is filtra de verdad;
+        // sin condiciones el update pisa lo que haya.
         const id = cadena.find((c) => c.op === 'eq' && c.args[0] === 'id')
           ?.args[1];
         const fila = filas.find((f) => f.id === id);
-        const cond = cadena.find(
-          (c) => (c.op === 'eq' || c.op === 'is') && c.args[0] === 'name'
+        const conds = cadena.filter(
+          (c) => (c.op === 'eq' || c.op === 'is') && c.args[0] !== 'id'
         );
-        // Como PostgREST: la condición sobre `name` filtra de verdad; sin
-        // ella el update pisa lo que haya.
         const vigente =
-          !!fila && (!cond || (cond.args[1] ?? null) === (fila.name ?? null));
+          !!fila &&
+          conds.every(
+            (c) => (c.args[1] ?? null) === (fila[c.args[0] as string] ?? null)
+          );
         if (vigente) {
           const cambios = cadena.find((c) => c.op === 'update')!
             .args[0] as Record<string, unknown>;
@@ -499,6 +560,10 @@ describe('de punta a punta: del JSON del proveedor al contacto de la app', () =>
 });
 
 describe('completarNombresSupabase', () => {
+  beforeEach(() => {
+    columnaOrigen.falta = false;
+  });
+
   it('solo escribe el nombre, condicionado al que leyó, y no toca a quien tiene uno', async () => {
     const filas = [
       {
@@ -529,7 +594,12 @@ describe('completarNombresSupabase', () => {
     expect(updates).toHaveLength(1);
     const u = updates[0];
     const cambios = u.find((x) => x.op === 'update')!.args[0] as object;
-    expect(Object.keys(cambios).sort()).toEqual(['name', 'updated_at']);
+    expect(Object.keys(cambios).sort()).toEqual([
+      'name',
+      'nombre_origen',
+      'updated_at',
+    ]);
+    expect(cambios).toMatchObject({ nombre_origen: 'agenda' });
     expect(u).toContainEqual({ op: 'eq', args: ['name', '573001112233'] });
     // Ninguna escritura que cree contactos.
     expect(
@@ -628,5 +698,94 @@ describe('completarNombresSupabase', () => {
     // Cada teléfono lleva sus variantes: ninguna consulta pasa de 25 teléfonos.
     for (const x of ins)
       expect((x.args[1] as string[]).length).toBeLessThanOrEqual(25 * 7);
+  });
+});
+
+describe('completarNombresSupabase: el origen del nombre (migración 132)', () => {
+  beforeEach(() => {
+    columnaOrigen.falta = false;
+  });
+  const fila = (
+    id: string,
+    phone: string,
+    name: string | null,
+    nombre_origen: 'agenda' | 'persona' | null
+  ) => ({
+    id,
+    phone,
+    name,
+    nombre_origen,
+    wa_user_id: null,
+    wa_parent_user_id: null,
+    wa_username: null,
+  });
+
+  it('renombre en la agenda: actualiza; de una persona: no; relleno: completa', async () => {
+    const filas = [
+      fila('c1', '573001110001', 'Ana vieja', 'agenda'),
+      fila('c2', '573001110002', 'Beto (obra 4)', 'persona'),
+      fila('c3', '573001110003', '573001110003', null),
+      // Con letras y origen desconocido: no se sabe quién lo puso, no se toca.
+      fila('c4', '573001110004', 'Carla', null),
+    ];
+    const { db, llamadas } = dbDoble(filas);
+    const n = await completarNombresSupabase(db as never, INQ, [
+      { telefono: '573001110001', nombre: 'Ana nueva' },
+      { telefono: '573001110002', nombre: 'Beto de la agenda' },
+      { telefono: '573001110003', nombre: 'Ceci' },
+      { telefono: '573001110004', nombre: 'Carla de la agenda' },
+    ]);
+    expect(n).toBe(2);
+    expect(filas.map((f) => [f.name, f.nombre_origen])).toEqual([
+      ['Ana nueva', 'agenda'],
+      ['Beto (obra 4)', 'persona'],
+      ['Ceci', 'agenda'],
+      ['Carla', null],
+    ]);
+    // El update va condicionado también al origen leído.
+    const u = llamadas.find((c) => c.some((x) => x.op === 'update'))!;
+    expect(u).toContainEqual({ op: 'eq', args: ['nombre_origen', 'agenda'] });
+  });
+
+  it('si una persona lo cambió en el medio (queda persona), no se pisa', async () => {
+    const filas = [fila('c1', '573001110001', 'Ana vieja', 'agenda')];
+    const { db } = dbDoble(filas);
+    const original = db.from.bind(db);
+    let lecturas = 0;
+    db.from = (t: string) => {
+      const q = original(t) as Record<string, (...a: unknown[]) => unknown>;
+      const select = q.select;
+      q.select = (...a: unknown[]) => {
+        // La persona deja el mismo texto: solo el origen delata el cambio.
+        if (++lecturas === 2) filas[0].nombre_origen = 'persona';
+        return select(...a);
+      };
+      return q;
+    };
+    const n = await completarNombresSupabase(db as never, INQ, [
+      { telefono: '573001110001', nombre: 'Ana nueva' },
+    ]);
+    expect(n).toBe(0);
+    expect(filas[0]).toMatchObject({
+      name: 'Ana vieja',
+      nombre_origen: 'persona',
+    });
+  });
+
+  it('sin la columna todavía: no rompe, completa el relleno y no la nombra', async () => {
+    const filas = [
+      fila('c1', '573001110001', 'Ana vieja', null),
+      fila('c3', '573001110003', '', null),
+    ];
+    const { db, llamadas } = dbDoble(filas, { sinColumnaOrigen: true });
+    const n = await completarNombresSupabase(db as never, INQ, [
+      { telefono: '573001110001', nombre: 'Ana nueva' },
+      { telefono: '573001110003', nombre: 'Ceci' },
+    ]);
+    expect(n).toBe(1);
+    expect(filas.map((f) => f.name)).toEqual(['Ana vieja', 'Ceci']);
+    expect(columnaOrigen.falta).toBe(true);
+    const updates = llamadas.filter((c) => c.some((x) => x.op === 'update'));
+    expect(JSON.stringify(updates)).not.toContain('nombre_origen');
   });
 });

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { cambiosDeContacto, type ContactoFila } from './contactos-supabase';
+import {
+  cambiosDeContacto,
+  nombreParaCompletar,
+  type ContactoFila,
+} from './contactos-supabase';
 
 const identidad = {
   telefono: '573001112233',
@@ -44,5 +48,31 @@ describe('cambiosDeContacto: el nombre', () => {
     expect(cambiosDeContacto(contacto('CO.1'), identidad).name).toBe(
       'Nombre de WhatsApp'
     );
+  });
+});
+
+describe('cambiosDeContacto: el origen del nombre', () => {
+  it('el nombre del perfil (un mensaje) no pisa el que puso la agenda', () => {
+    expect(
+      cambiosDeContacto(
+        { ...contacto('Ana de la agenda'), nombre_origen: 'agenda' },
+        identidad
+      ).name
+    ).toBeUndefined();
+  });
+});
+
+describe('nombreParaCompletar: el origen del nombre', () => {
+  it('nunca sobre uno de una persona, aunque sea el teléfono', () => {
+    expect(
+      nombreParaCompletar(
+        { ...contacto('573001112233'), nombre_origen: 'persona' },
+        'Nombre de la agenda'
+      )
+    ).toBeNull();
+    // Testigo: el mismo relleno sin origen sí se completa.
+    expect(
+      nombreParaCompletar(contacto('573001112233'), 'Nombre de la agenda')
+    ).toBe('Nombre de la agenda');
   });
 });
