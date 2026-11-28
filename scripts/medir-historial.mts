@@ -5,7 +5,7 @@
 // completos (se enmascaran como «••• últimos 4»).
 //
 //   NODE_USE_ENV_PROXY=1 ZERNIO_API_KEY=proxy-injected \
-//   node --experimental-transform-types scripts/medir-historial.mts <accountId> [chats]
+//   node --experimental-transform-types scripts/medir-historial.mts <accountId> [chats] [conectadoDesde ISO]
 //
 // En la nube el proxy pone la llave verdadera; sin `NODE_USE_ENV_PROXY=1` el
 // `fetch` de Node no pasa por el proxy y responde 403.
@@ -102,8 +102,9 @@ const fetchSoloLectura: typeof fetch = async (entrada, init) => {
 const almacen = new AlmacenMemoria({
   accountId: 'medicion',
   usuarioId: 'medicion',
-  // Como en producción sin fecha: todo es historia (falla cerrado).
-  conectadoDesde: null,
+  // La fecha de conexión: tercer argumento o, si no viene, ahora (todo lo
+  // anterior es historia).
+  conectadoDesde: process.argv[4] ?? new Date().toISOString(),
 });
 const fuente = new h.FuenteHistorialZernio({ apiKey, fetch: fetchSoloLectura });
 
