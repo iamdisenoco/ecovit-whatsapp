@@ -12,7 +12,7 @@
 
 import { extensionForMime } from '@/lib/media/filename';
 import { normalizeMimeType } from '../mirror-inbound-media';
-import type { ProveedorWhatsApp } from '../proveedor/tipos';
+import type { ArchivoBajado, ProveedorWhatsApp } from '../proveedor/tipos';
 import type { AlmacenWhatsApp } from './almacen';
 import { ADJUNTO_SIN_DESCARGAR, type TrabajoAdjunto } from './procesar';
 
@@ -46,6 +46,29 @@ export function rutaDesdeUrlInterna(url: string): string | null {
   return partes.join('/');
 }
 
+/**
+ * Guarda en el bucket un archivo ya bajado, en la ruta de siempre. Devuelve la
+ * `media_url` interna, o `null` si no tiene un tipo usable o Storage falló. La
+ * usan el webhook y el importador del historial: la misma ruta para los dos.
+ */
+export async function guardarArchivoAdjunto(
+  almacen: AlmacenWhatsApp,
+  destino: { accountId: string; wamid: string; indice: number },
+  archivo: ArchivoBajado,
+  mimeDeclarado: string | null
+): Promise<string | null> {
+  const mime = normalizeMimeType(archivo.mime ?? mimeDeclarado);
+  if (!mime) return null;
+  const ruta = rutaAdjunto(
+    destino.accountId,
+    destino.wamid,
+    destino.indice,
+    mime
+  );
+  const ok = await almacen.guardarAdjunto(ruta, archivo.bytes, mime);
+  return ok ? urlInternaAdjunto(ruta) : null;
+}
+
 export async function guardarAdjuntoEntrante(
   proveedor: ProveedorWhatsApp,
   almacen: AlmacenWhatsApp,
@@ -60,25 +83,28 @@ export async function guardarAdjuntoEntrante(
       err instanceof Error ? err.message : err
     );
   }
-  const mime = normalizeMimeType(archivo?.mime ?? trabajo.adjunto.mime);
-  if (!archivo || !mime) {
+  const url = archivo
+    ? await guardarArchivoAdjunto(
+        almacen,
+        {
+          accountId: trabajo.accountId,
+          wamid: trabajo.wamid,
+          indice: trabajo.adjunto.indice,
+        },
+        archivo,
+        trabajo.adjunto.mime
+      )
+    : null;
+  if (!url) {
     console.warn(
       `[webhook] adjunto de ${trabajo.wamid} recibido, sin descargar`
     );
     return 'sin_descargar';
   }
-  const ruta = rutaAdjunto(
-    trabajo.accountId,
-    trabajo.wamid,
-    trabajo.adjunto.indice,
-    mime
-  );
-  const ok = await almacen.guardarAdjunto(ruta, archivo.bytes, mime);
-  if (!ok) return 'sin_descargar';
   // Si el mensaje no traía texto, se quita el aviso de «sin descargar».
   await almacen.actualizarAdjunto(
     trabajo.mensajeId,
-    urlInternaAdjunto(ruta),
+    url,
     trabajo.textoOriginal ?? null
   );
   return 'guardado';

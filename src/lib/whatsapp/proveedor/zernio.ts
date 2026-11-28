@@ -47,6 +47,92 @@ export function sinNombreDeProveedor(texto: string): string {
 /** El tope del bucket `chat-media` (16 MB). Un adjunto más grande no se baja. */
 export const ADJUNTO_MAX_BYTES = 16 * 1024 * 1024;
 
+/**
+ * Cómo terminó la bajada de un adjunto:
+ * - `bajado`: el archivo y su tipo;
+ * - `vencido`: 400/404/410. WhatsApp ya borró el archivo y el proveedor
+ *   responde lo mismo para siempre: no se reintenta;
+ * - `grande`: pasa el tope del bucket; tampoco cambia al reintentar;
+ * - `limite`: 429, hay que esperar (los encabezados dicen cuánto);
+ * - `fallo`: red, tiempo agotado, 5xx, llave o URL ajena. Otro día puede servir.
+ */
+export type ResultadoBajada =
+  | { estado: 'bajado'; archivo: ArchivoBajado }
+  | { estado: 'vencido'; http: number }
+  | { estado: 'grande' }
+  | { estado: 'limite'; encabezados: Headers }
+  | { estado: 'fallo'; http: number | null };
+
+/**
+ * La ÚNICA bajada de adjuntos del proveedor: la usan el webhook
+ * (`descargarAdjunto`) y el importador del historial. Solo GET, con Bearer y
+ * solo al mismo origen de la API. La URL puede venir relativa
+ * (`/api/v1/whatsapp/media/{id}?accountId=…`, así la trae la bandeja): se
+ * resuelve contra la base.
+ */
+export async function bajarMediaZernio(
+  config: {
+    apiKey: string;
+    baseUrl: string;
+    fetch: typeof fetch;
+    timeoutMs: number;
+  },
+  url: string,
+  mimeDeclarado: string | null
+): Promise<ResultadoBajada> {
+  if (!config.apiKey) return { estado: 'fallo', http: null };
+  let destino: URL;
+  try {
+    destino = new URL(url, config.baseUrl);
+  } catch {
+    return { estado: 'fallo', http: null };
+  }
+  if (destino.origin !== new URL(config.baseUrl).origin)
+    return { estado: 'fallo', http: null };
+
+  let respuesta: Response;
+  try {
+    respuesta = await config.fetch(destino.toString(), {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${config.apiKey}` },
+      signal: AbortSignal.timeout(config.timeoutMs),
+    });
+  } catch {
+    return { estado: 'fallo', http: null };
+  }
+  const descartar = () => respuesta.body?.cancel().catch(() => {});
+  if (respuesta.status === 429) {
+    await descartar();
+    return { estado: 'limite', encabezados: respuesta.headers };
+  }
+  if ([400, 404, 410].includes(respuesta.status)) {
+    await descartar();
+    return { estado: 'vencido', http: respuesta.status };
+  }
+  if (!respuesta.ok) {
+    await descartar();
+    return { estado: 'fallo', http: respuesta.status };
+  }
+  const largo = Number(respuesta.headers.get('content-length') ?? '0');
+  if (largo > ADJUNTO_MAX_BYTES) {
+    await descartar();
+    return { estado: 'grande' };
+  }
+  let bytes: Uint8Array;
+  try {
+    bytes = new Uint8Array(await respuesta.arrayBuffer());
+  } catch {
+    return { estado: 'fallo', http: respuesta.status };
+  }
+  if (bytes.byteLength > ADJUNTO_MAX_BYTES) return { estado: 'grande' };
+  if (bytes.byteLength === 0) return { estado: 'fallo', http: respuesta.status };
+  const mime =
+    (respuesta.headers.get('content-type') ?? mimeDeclarado ?? '')
+      .split(';')[0]
+      .trim() || null;
+  return { estado: 'bajado', archivo: { bytes, mime } };
+}
+
 export interface ConfigZernio {
   apiKey: string;
   /** Uno o varios secretos de firma (`ZERNIO_WEBHOOK_SECRET`, separados por coma). */
@@ -395,34 +481,8 @@ export class ProveedorZernio implements ProveedorWhatsApp {
   async descargarAdjunto(
     adjunto: AdjuntoEntrante
   ): Promise<ArchivoBajado | null> {
-    if (!this.config.apiKey) return null;
-    let destino: URL;
-    try {
-      destino = new URL(adjunto.url);
-    } catch {
-      return null;
-    }
-    if (destino.origin !== new URL(this.config.baseUrl).origin) return null;
-
-    let respuesta: Response;
-    try {
-      respuesta = await this.config.fetch(destino.toString(), {
-        headers: { Authorization: `Bearer ${this.config.apiKey}` },
-        signal: AbortSignal.timeout(this.config.timeoutMs),
-      });
-    } catch {
-      return null;
-    }
-    if (!respuesta.ok) return null;
-    const largo = Number(respuesta.headers.get('content-length') ?? '0');
-    if (largo > ADJUNTO_MAX_BYTES) return null;
-    const bytes = new Uint8Array(await respuesta.arrayBuffer());
-    if (bytes.byteLength === 0 || bytes.byteLength > ADJUNTO_MAX_BYTES)
-      return null;
-    const mime =
-      (respuesta.headers.get('content-type') ?? adjunto.mime ?? '')
-        .split(';')[0]
-        .trim() || null;
-    return { bytes, mime };
+    const r = await bajarMediaZernio(this.config, adjunto.url, adjunto.mime);
+    return r.estado === 'bajado' ? r.archivo : null;
   }
+
 }
