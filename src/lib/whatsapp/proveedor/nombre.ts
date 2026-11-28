@@ -19,8 +19,8 @@ export function nombreProveedor(env: Entorno = process.env): NombreProveedor {
     return valor as NombreProveedor;
   throw new ErrorConfiguracion(
     valor
-      ? `WHATSAPP_PROVEEDOR="${valor}" no es válido: usa zernio, simulado o meta.`
-      : 'Falta WHATSAPP_PROVEEDOR (zernio, simulado o meta) en el entorno del servidor.'
+      ? `La conexión de WhatsApp está mal configurada (WHATSAPP_PROVEEDOR="${valor}").`
+      : 'La conexión de WhatsApp no está configurada (falta WHATSAPP_PROVEEDOR en el servidor).'
   );
 }
 

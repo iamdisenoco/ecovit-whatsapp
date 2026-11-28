@@ -30,7 +30,7 @@ interface Conexion {
 }
 
 const NOMBRES: Record<string, string> = {
-  zernio: 'Zernio',
+  zernio: 'WhatsApp Business',
   simulado: 'Simulado (pruebas, nada sale a WhatsApp)',
   meta: 'Meta directo',
 };
@@ -158,8 +158,8 @@ export function WhatsAppConexion() {
               ) : null}
               {conexion.proveedor === 'zernio' ? (
                 <Fila
-                  etiqueta="accountId de Zernio"
-                  valor={conexion.cuentaId ?? 'Falta ZERNIO_ACCOUNT_ID'}
+                  etiqueta="Cuenta del número"
+                  valor={conexion.cuentaId ?? 'Sin configurar'}
                 />
               ) : null}
               {conexion.ultimoWebhook !== undefined ? (

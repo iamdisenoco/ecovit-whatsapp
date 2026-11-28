@@ -107,7 +107,7 @@ export class ProveedorZernio implements ProveedorWhatsApp {
   private exigirLlave(): void {
     if (!this.config.apiKey)
       throw new ErrorConfiguracion(
-        'Falta ZERNIO_API_KEY en el entorno del servidor.'
+        'La conexión de WhatsApp no está configurada: falta la llave en el servidor.'
       );
   }
 
@@ -115,7 +115,7 @@ export class ProveedorZernio implements ProveedorWhatsApp {
     const cuenta = ref.cuentaId || this.config.cuentaId;
     if (!cuenta)
       throw new ErrorConfiguracion(
-        'Falta ZERNIO_ACCOUNT_ID en el entorno del servidor.'
+        'La conexión de WhatsApp no está configurada: falta la cuenta del número en el servidor.'
       );
     return cuenta;
   }
@@ -148,9 +148,12 @@ export class ProveedorZernio implements ProveedorWhatsApp {
       });
     } catch (err) {
       const motivo = err instanceof Error ? err.message : String(err);
-      throw new ErrorProveedor(`No hubo respuesta de Zernio: ${motivo}`, {
-        dudoso: true,
-      });
+      throw new ErrorProveedor(
+        `No hubo respuesta de la conexión de WhatsApp: ${motivo}`,
+        {
+          dudoso: true,
+        }
+      );
     }
 
     const texto = await respuesta.text().catch(() => '');
@@ -171,7 +174,7 @@ export class ProveedorZernio implements ProveedorWhatsApp {
     const detalle = str(json.error) ?? texto.slice(0, 300) ?? '';
     const codigo = str(json.code);
     throw new ErrorProveedor(
-      `Zernio respondió ${estado}${codigo ? ` (${codigo})` : ''}: ${detalle}`,
+      `La conexión de WhatsApp respondió ${estado}${codigo ? ` (${codigo})` : ''}: ${detalle}`,
       { dudoso, estadoHttp: estado, codigo }
     );
   }
@@ -185,7 +188,7 @@ export class ProveedorZernio implements ProveedorWhatsApp {
     if (!mensajeId) {
       // 2xx sin id: salió, pero no hay con qué seguirlo. Lo resuelve el evento.
       throw new ErrorProveedor(
-        'Zernio aceptó el envío pero no devolvió messageId.',
+        'La conexión de WhatsApp aceptó el envío pero no devolvió el id del mensaje.',
         { dudoso: true }
       );
     }
@@ -206,7 +209,7 @@ export class ProveedorZernio implements ProveedorWhatsApp {
     const id = destino.referencia.conversacionId;
     if (!id) {
       throw new ErrorProveedor(
-        'Este chat no tiene la conversación de Zernio guardada: no se puede contestar en él. ' +
+        'Este chat no tiene guardada su conversación de WhatsApp: no se puede contestar en él. ' +
           'Fuera de una conversación abierta solo se puede escribir con una plantilla.',
         { dudoso: false, codigo: 'sin_conversacion_proveedor' }
       );
@@ -339,13 +342,15 @@ export class ProveedorZernio implements ProveedorWhatsApp {
     if (!this.config.apiKey)
       return {
         conectado: false,
-        detalle: 'Falta ZERNIO_API_KEY en el servidor.',
+        detalle:
+          'La conexión de WhatsApp no está configurada: falta la llave en el servidor.',
         ...vacio,
       };
     if (!this.config.cuentaId) {
       return {
         conectado: false,
-        detalle: 'Falta ZERNIO_ACCOUNT_ID en el servidor.',
+        detalle:
+          'La conexión de WhatsApp no está configurada: falta la cuenta del número en el servidor.',
         ...vacio,
       };
     }
@@ -357,7 +362,7 @@ export class ProveedorZernio implements ProveedorWhatsApp {
       const tel = obj(json.phone);
       return {
         conectado: true,
-        detalle: 'Zernio lee el número en Meta: el canal está vivo.',
+        detalle: 'El número responde en Meta: el canal está vivo.',
         numero: str(tel.display_phone_number),
         nombre: str(tel.verified_name),
         calidad: str(tel.quality_rating),
