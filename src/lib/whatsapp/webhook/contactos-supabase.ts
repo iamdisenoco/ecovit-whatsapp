@@ -13,7 +13,7 @@ import { ErrorAlmacen, type Inquilino } from './almacen';
 const COLUMNAS_CONTACTO =
   'id, phone, name, wa_user_id, wa_parent_user_id, wa_username';
 
-interface ContactoFila {
+export interface ContactoFila {
   id: string;
   phone: string | null;
   name: string | null;
@@ -49,6 +49,49 @@ async function contactoPorTelefono(
   return c ? (c as unknown as ContactoFila) : null;
 }
 
+/** ¿El nombre es de relleno (el teléfono o el BSUID que se puso al crearlo)? */
+function sinNombre(c: ContactoFila): boolean {
+  const n = (c.name ?? '').trim();
+  if (!n) return true;
+  const digitos = n.replace(/\D/g, '');
+  return (
+    (!!digitos && digitos === normalizePhone(c.phone ?? '')) ||
+    n === c.wa_user_id ||
+    n === c.wa_username
+  );
+}
+
+/**
+ * Lo que se completa en un contacto que ya existe. Solo lo que falta o lo que
+ * el proveedor sí dijo. El nombre solo se pone si no había uno de verdad: nunca
+ * pisa el que alguien escribió a mano. El teléfono se llena solo si estaba
+ * vacío: nunca se reescribe (re-enlazaría el chat a otro cliente de ECOVIT,
+ * bloque 3).
+ */
+export function cambiosDeContacto(
+  existente: ContactoFila,
+  identidad: IdentidadRemitente
+): Record<string, string> {
+  const cambios: Record<string, string> = {};
+  const nombre = identidad.nombre || identidad.waUsername;
+  if (nombre && nombre !== existente.name && sinNombre(existente))
+    cambios.name = nombre;
+  if (identidad.waUserId && identidad.waUserId !== existente.wa_user_id)
+    cambios.wa_user_id = identidad.waUserId;
+  if (
+    identidad.waParentUserId &&
+    identidad.waParentUserId !== existente.wa_parent_user_id
+  ) {
+    cambios.wa_parent_user_id = identidad.waParentUserId;
+  }
+  if (identidad.waUsername && identidad.waUsername !== existente.wa_username) {
+    cambios.wa_username = identidad.waUsername;
+  }
+  if (identidad.telefono && !normalizePhone(existente.phone ?? ''))
+    cambios.phone = identidad.telefono;
+  return cambios;
+}
+
 export async function buscarOCrearContactoSupabase(
   db: SupabaseClient,
   inq: Inquilino,
@@ -65,28 +108,7 @@ export async function buscarOCrearContactoSupabase(
     );
 
   if (existente) {
-    // Solo completa lo que falta o lo que el proveedor sí dijo. El teléfono se
-    // llena solo si estaba vacío: nunca se reescribe (re-enlazaría el chat a
-    // otro cliente de ECOVIT, bloque 3).
-    const cambios: Record<string, string> = {};
-    const nombre = identidad.nombre || identidad.waUsername;
-    if (nombre && nombre !== existente.name) cambios.name = nombre;
-    if (identidad.waUserId && identidad.waUserId !== existente.wa_user_id)
-      cambios.wa_user_id = identidad.waUserId;
-    if (
-      identidad.waParentUserId &&
-      identidad.waParentUserId !== existente.wa_parent_user_id
-    ) {
-      cambios.wa_parent_user_id = identidad.waParentUserId;
-    }
-    if (
-      identidad.waUsername &&
-      identidad.waUsername !== existente.wa_username
-    ) {
-      cambios.wa_username = identidad.waUsername;
-    }
-    if (identidad.telefono && !normalizePhone(existente.phone ?? ''))
-      cambios.phone = identidad.telefono;
+    const cambios = cambiosDeContacto(existente, identidad);
     if (Object.keys(cambios).length > 0) {
       const { error } = await db
         .from('contacts')
