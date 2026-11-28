@@ -35,6 +35,7 @@ import {
   type EstadoEvento,
   type Inquilino,
   type MensajeNuevo,
+  type OpcionesConversacionNueva,
   type ResumenHistoria,
 } from './almacen';
 
@@ -223,7 +224,8 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
 
   async buscarOCrearConversacion(
     inq: Inquilino,
-    contactoId: string
+    contactoId: string,
+    nueva?: OpcionesConversacionNueva
   ): Promise<{ conversacion: ConversacionFila; creada: boolean }> {
     const existente = await this.conversacionDe(inq.accountId, contactoId);
     if (existente) return { conversacion: existente, creada: false };
@@ -235,6 +237,10 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
         account_id: inq.accountId,
         user_id: inq.usuarioId,
         contact_id: contactoId,
+        // `stamp_conversation_closed_at` respeta el `closed_at` que viene.
+        ...(nueva?.cerradaEn
+          ? { status: 'closed', closed_at: nueva.cerradaEn }
+          : {}),
       })
       .select(COLUMNAS_CONVERSACION)
       .single();
@@ -302,6 +308,25 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
       );
     }
     return { id: data[0].id as string };
+  }
+
+  async insertarMensajesSiNuevos(filas: MensajeNuevo[]): Promise<number> {
+    if (filas.length === 0) return 0;
+    // Un solo upsert con ON CONFLICT DO NOTHING: `.select()` devuelve solo
+    // las filas que entraron. Sin `applyPendingMessageStatuses`: es historia
+    // y trae su propio estado de entrega.
+    const { data, error } = await this.db
+      .from('messages')
+      .upsert(filas, {
+        onConflict: 'conversation_id,message_id',
+        ignoreDuplicates: true,
+      })
+      .select('id');
+    if (error)
+      throw new ErrorAlmacen(
+        `No se pudieron guardar los mensajes: ${error.message}`
+      );
+    return data?.length ?? 0;
   }
 
   async buscarMensajePorWamid(

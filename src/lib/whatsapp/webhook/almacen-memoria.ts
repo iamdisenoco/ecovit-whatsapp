@@ -22,6 +22,7 @@ import type {
   EstadoEvento,
   Inquilino,
   MensajeNuevo,
+  OpcionesConversacionNueva,
   ResumenHistoria,
 } from './almacen';
 
@@ -53,6 +54,8 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
       unread_count: number;
       last_message_text: string | null;
       last_message_at: string | null;
+      closed_at?: string | null;
+      last_reply_at?: string | null;
     }
   > = [];
   referencias = new Map<string, ReferenciaConversacion>();
@@ -126,7 +129,11 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
     return { contactoId: id, creado: true };
   }
 
-  async buscarOCrearConversacion(_inq: Inquilino, contactoId: string) {
+  async buscarOCrearConversacion(
+    _inq: Inquilino,
+    contactoId: string,
+    opciones?: OpcionesConversacionNueva
+  ) {
     const existente = this.conversaciones.find(
       (c) => c.contact_id === contactoId
     );
@@ -134,7 +141,8 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
     const nueva = {
       id: randomUUID(),
       contact_id: contactoId,
-      status: 'open',
+      status: opciones?.cerradaEn ? 'closed' : 'open',
+      closed_at: opciones?.cerradaEn ?? null,
       assigned_agent_id: null,
       ai_autoreply_disabled: false,
       ai_handoff_summary: null,
@@ -174,6 +182,10 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
   }
 
   async insertarMensajeSiNuevo(fila: MensajeNuevo) {
+    return this.insertarUna(fila);
+  }
+
+  private async insertarUna(fila: MensajeNuevo) {
     if (this.fallarSiguienteInsert) {
       this.fallarSiguienteInsert = false;
       throw new Error('base caída (simulada)');
@@ -199,6 +211,14 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
       if (Date.parse(fila.created_at) > previo)
         conv.last_inbound_at = fila.created_at;
     }
+    // …y lo del negocio mueve `last_reply_at`, salvo si falló.
+    if (conv && fila.sender_type === 'agent' && fila.status !== 'failed') {
+      const previo = conv.last_reply_at
+        ? Date.parse(conv.last_reply_at)
+        : -Infinity;
+      if (Date.parse(fila.created_at) > previo)
+        conv.last_reply_at = fila.created_at;
+    }
     // Los estados que llegaron antes que la fila (pending_message_statuses).
     const parked = this.pendientes.filter((p) => p.wamid === fila.message_id);
     if (parked.length) {
@@ -213,6 +233,15 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
       );
     }
     return { id };
+  }
+
+  /** Contador de llamadas, para ver en las pruebas que la historia va en lote. */
+  lotes = 0;
+  async insertarMensajesSiNuevos(filas: MensajeNuevo[]) {
+    this.lotes++;
+    let n = 0;
+    for (const f of filas) if (await this.insertarUna(f)) n++;
+    return n;
   }
 
   async buscarMensajePorWamid(conversacionId: string, wamid: string) {
@@ -267,6 +296,8 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
     const c = this.conversacion(conv.id);
     c.unread_count++;
     c.last_message_text = resumen;
+    // `bump_conversation_on_inbound` pone NOW(); aquí, la hora de llegada.
+    c.last_message_at = recibidoEn;
     c.last_inbound_at = recibidoEn;
     if (c.status === 'closed') c.status = 'open';
     const primerEntrante = !c.first_inbound_at;

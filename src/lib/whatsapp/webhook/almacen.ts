@@ -63,6 +63,12 @@ export interface MensajeNuevo {
   desde_celular: boolean;
 }
 
+/** Cómo nace un chat si hay que crearlo. Si ya existía, no se toca. */
+export interface OpcionesConversacionNueva {
+  /** Nace cerrado en esa fecha (la historia: no queda «esperando respuesta»). */
+  cerradaEn?: string;
+}
+
 export interface ResumenHistoria {
   /** Texto del último mensaje de la tanda (o `[tipo]`). */
   resumen: string;
@@ -110,7 +116,8 @@ export interface AlmacenWhatsApp {
   ): Promise<{ contactoId: string; creado: boolean }>;
   buscarOCrearConversacion(
     inquilino: Inquilino,
-    contactoId: string
+    contactoId: string,
+    nueva?: OpcionesConversacionNueva
   ): Promise<{ conversacion: ConversacionFila; creada: boolean }>;
 
   /** Guarda la conversación (y la cuenta) del proveedor para poder contestar. */
@@ -121,6 +128,12 @@ export interface AlmacenWhatsApp {
 
   /** Inserta si no existe (conversation_id, message_id). `null` = ya estaba. */
   insertarMensajeSiNuevo(fila: MensajeNuevo): Promise<{ id: string } | null>;
+
+  /**
+   * Lo mismo en lote (la historia): un solo viaje por página. Devuelve cuántas
+   * filas entraron de verdad; las repetidas no cuentan.
+   */
+  insertarMensajesSiNuevos(filas: MensajeNuevo[]): Promise<number>;
 
   /** Id interno de un mensaje por su wamid, dentro de la conversación. */
   buscarMensajePorWamid(

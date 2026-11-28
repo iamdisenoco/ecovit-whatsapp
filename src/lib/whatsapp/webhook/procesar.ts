@@ -24,6 +24,7 @@ import {
   type ConversacionFila,
   type Inquilino,
   type MensajeNuevo,
+  type OpcionesConversacionNueva,
 } from './almacen';
 import {
   MOTIVO_CELULAR,
@@ -103,7 +104,8 @@ export async function chatDeMensaje(
   almacen: AlmacenWhatsApp,
   inq: Inquilino,
   identidad: IdentidadRemitente,
-  referencia: ReferenciaConversacion
+  referencia: ReferenciaConversacion,
+  nueva?: OpcionesConversacionNueva
 ): Promise<{
   conversacion: ConversacionFila;
   contactoId: string;
@@ -130,7 +132,8 @@ export async function chatDeMensaje(
   );
   const { conversacion } = await almacen.buscarOCrearConversacion(
     inq,
-    contactoId
+    contactoId,
+    nueva
   );
   if (referencia.conversacionId) {
     await almacen.guardarReferencia(conversacion.id, referencia);
