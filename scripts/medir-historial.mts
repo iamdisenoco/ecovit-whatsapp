@@ -40,9 +40,16 @@ if (!apiKey) {
   process.exit(2);
 }
 
-const h = await import('../src/lib/whatsapp/proveedor/historial.ts');
-const { AlmacenMemoria } =
-  await import('../src/lib/whatsapp/webhook/almacen-memoria.ts');
+// Las rutas van en variables: así `tsc` no exige `allowImportingTsExtensions`.
+const rutaHistorial = '../src/lib/whatsapp/proveedor/historial.ts';
+const rutaMemoria = '../src/lib/whatsapp/webhook/almacen-memoria.ts';
+const h: typeof import('../src/lib/whatsapp/proveedor/historial') =
+  await import(rutaHistorial);
+const {
+  AlmacenMemoria,
+}: typeof import('../src/lib/whatsapp/webhook/almacen-memoria') = await import(
+  rutaMemoria
+);
 
 const mascara = (s: string | null | undefined) =>
   s ? `••• ${s.replace(/\D/g, '').slice(-4)}` : '(sin dato)';
@@ -103,7 +110,7 @@ const fuente = new h.FuenteHistorialZernio({ apiKey, fetch: fetchSoloLectura });
 const inicio = performance.now();
 const tramos: Array<{ ms: number; procesadas: number; mensajes: number }> = [];
 let cursor: string | null = null;
-let ultimo;
+let ultimo: Awaited<ReturnType<typeof h.importarHistorial>> | undefined;
 for (;;) {
   const t0 = performance.now();
   ultimo = await h.importarHistorial({
@@ -119,8 +126,8 @@ for (;;) {
     mensajes: ultimo.mensajes,
   });
   if (ultimo.terminado || ultimo.listas >= maxChats) break;
-  if (ultimo.esperarMs)
-    await new Promise((r) => setTimeout(r, ultimo.esperarMs));
+  const espera = ultimo.esperarMs;
+  if (espera) await new Promise((r) => setTimeout(r, espera));
   cursor = ultimo.cursor;
 }
 const totalMs = Math.round(performance.now() - inicio);
