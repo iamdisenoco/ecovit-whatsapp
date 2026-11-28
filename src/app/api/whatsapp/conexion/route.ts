@@ -80,6 +80,7 @@ export async function GET() {
     const config = await leerConfigWhatsApp(accountId).catch(() => null);
     return NextResponse.json({
       ...base,
+      esDireccion: true,
       detalle: estado.detalle,
       numero: estado.numero,
       nombre: estado.nombre,

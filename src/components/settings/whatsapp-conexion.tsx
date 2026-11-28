@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { SettingsPanelHead } from './settings-panel-head';
 import { WhatsAppConfig } from './whatsapp-config';
+import { ImportarHistorial } from './importar-historial';
 
 interface Conexion {
   proveedor: 'zernio' | 'simulado' | 'meta' | null;
@@ -24,6 +25,8 @@ interface Conexion {
   cuentaId?: string | null;
   ultimoWebhook?: string | null;
   ultimoWebhookNota?: string | null;
+  /** Solo viene (en `true`) cuando quien mira es la dirección. */
+  esDireccion?: boolean;
 }
 
 const NOMBRES: Record<string, string> = {
@@ -171,6 +174,9 @@ export function WhatsAppConexion() {
               ) : null}
             </dl>
           )}
+          {conexion?.esDireccion && conexion.proveedor === 'zernio' ? (
+            <ImportarHistorial />
+          ) : null}
         </CardContent>
       </Card>
       {conexion?.proveedor === 'meta' ? (
