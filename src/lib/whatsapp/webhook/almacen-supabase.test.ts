@@ -40,7 +40,7 @@ function doble(
         ll.filtros.push([`${m}:${c}`, v]);
         return b;
       };
-      for (const m of ['eq', 'is', 'in', 'gte', 'gt', 'lt']) b[m] = filtro(m);
+      for (const m of ['eq', 'is', 'in', 'gte', 'gt', 'lt', 'neq', 'or']) b[m] = filtro(m);
       b.select = (c?: string) => {
         ll.columnas = c;
         return b;
@@ -59,6 +59,10 @@ function doble(
         return b;
       };
       b.single = async () => ({ data: { id: 'nueva' }, error: null });
+      b.delete = () => {
+        ll.metodo = 'delete';
+        return b;
+      };
       b.update = (row: unknown) => {
         ll.metodo = 'update';
         ll.args = row;
@@ -117,6 +121,67 @@ describe('AlmacenSupabase con la 0115', () => {
       'lt:closed_at',
       '2026-06-09T00:00:00.000Z',
     ]);
+  });
+
+  it('borrarMensajesSinContenido filtra por chat, wamid Y el texto exacto', async () => {
+    const { db, llamadas } = doble({ messages: [{ id: 'm1' }] });
+    const n = await new AlmacenSupabase(db).borrarMensajesSinContenido(
+      'c',
+      ['w1'],
+      '[Unsupported message]'
+    );
+    expect(n).toBe(1);
+    const borrar = llamadas.find((l) => l.metodo === 'delete')!;
+    expect(borrar.tabla).toBe('messages');
+    expect(borrar.filtros).toEqual([
+      ['eq:conversation_id', 'c'],
+      ['in:message_id', ['w1']],
+      ['eq:content_text', '[Unsupported message]'],
+    ]);
+  });
+
+  it('recalcularChat escribe directo las fechas del último mensaje que queda', async () => {
+    const { db, llamadas } = doble({
+      conversations: [
+        {
+          id: 'c',
+          status: 'closed',
+          created_at: '2026-10-31T23:50:00.000Z',
+          closed_at: '2026-10-31T23:50:00.000Z',
+        },
+      ],
+      messages: [
+        {
+          created_at: '2026-06-10T10:00:00.000Z',
+          content_text: '[Unsupported message]',
+          content_type: 'text',
+        },
+      ],
+    });
+    const r = await new AlmacenSupabase(db).recalcularChat(
+      'c',
+      '2026-11-01T00:00:00.000Z'
+    );
+    expect(r).toBe('recalculado');
+    const [resumen, creado, cierre] = llamadas.filter(
+      (l) => l.metodo === 'update'
+    );
+    expect(resumen.args).toEqual({
+      last_message_text: 'Archivo que no se pudo mostrar',
+      last_message_at: '2026-06-10T10:00:00.000Z',
+      first_inbound_at: '2026-06-10T10:00:00.000Z',
+      last_inbound_at: '2026-06-10T10:00:00.000Z',
+      last_reply_at: '2026-06-10T10:00:00.000Z',
+    });
+    // Sin condición: el valor puede BAJAR (no es GREATEST).
+    expect(resumen.filtros).toEqual([['eq:id', 'c']]);
+    expect(creado.args).toEqual({ created_at: '2026-06-10T10:00:00.000Z' });
+    expect(cierre.filtros).toContainEqual(['eq:status', 'closed']);
+    // Las respuestas se cuentan como el disparador: agente o IA, sin fallidos.
+    const respuesta = llamadas.find((l) =>
+      l.filtros.some(([f]) => f === 'or:sender_type.eq.agent,ai_generated.is.true')
+    );
+    expect(respuesta?.filtros).toContainEqual(['neq:status', 'failed']);
   });
 
   it('tomarEvento devuelve el texto de registrar_evento_wa (en_curso incluido)', async () => {

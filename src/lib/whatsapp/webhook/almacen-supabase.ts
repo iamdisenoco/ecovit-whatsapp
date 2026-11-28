@@ -512,31 +512,41 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
       ]);
     // Directo a la tabla: los disparadores de `messages` (GREATEST) no corren
     // con un UPDATE de `conversations`, así que estas fechas sí pueden bajar.
-    const cambios: Record<string, string | null> = {
-      last_message_text: resumen(ultimo.content_text, ultimo.content_type),
-      last_message_at: ultimo.created_at,
-      first_inbound_at: primerEntrante?.created_at ?? null,
-      last_inbound_at: ultimoEntrante?.created_at ?? null,
-      last_reply_at: ultimaRespuesta?.created_at ?? null,
-    };
-    if (deHistoria && primero) {
-      cambios.created_at = primero.created_at;
-      // Sin tocar `status`: `stamp_conversation_closed_at` no corre. Solo si
-      // sigue cerrado desde la historia (nadie lo cerró después).
-      if (
-        conv.status === 'closed' &&
-        conv.closed_at &&
-        Date.parse(conv.closed_at as string) < corte
-      )
-        cambios.closed_at = ultimo.created_at;
-    }
     const { error: errCambio } = await this.db
       .from('conversations')
-      .update(cambios)
+      .update({
+        last_message_text: resumen(ultimo.content_text, ultimo.content_type),
+        last_message_at: ultimo.created_at,
+        first_inbound_at: primerEntrante?.created_at ?? null,
+        last_inbound_at: ultimoEntrante?.created_at ?? null,
+        last_reply_at: ultimaRespuesta?.created_at ?? null,
+      })
       .eq('id', conversacionId);
     if (errCambio)
       throw new ErrorAlmacen(
         `No se pudo recalcular el chat: ${errCambio.message}`
+      );
+    if (!deHistoria || !primero) return 'recalculado';
+    // Lo creó la historia: sus fechas reales. Sin tocar `status`, así
+    // `stamp_conversation_closed_at` no corre; el cierre solo si sigue cerrado
+    // desde la historia (nadie lo cerró después).
+    const { error: errCreado } = await this.db
+      .from('conversations')
+      .update({ created_at: primero.created_at })
+      .eq('id', conversacionId);
+    if (errCreado)
+      throw new ErrorAlmacen(
+        `No se pudo corregir la fecha del chat: ${errCreado.message}`
+      );
+    const { error: errCierre } = await this.db
+      .from('conversations')
+      .update({ closed_at: ultimo.created_at })
+      .eq('id', conversacionId)
+      .eq('status', 'closed')
+      .lt('closed_at', new Date(corte).toISOString());
+    if (errCierre)
+      throw new ErrorAlmacen(
+        `No se pudo corregir el cierre del chat: ${errCierre.message}`
       );
     return 'recalculado';
   }
