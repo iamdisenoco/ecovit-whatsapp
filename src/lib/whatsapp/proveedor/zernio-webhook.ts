@@ -26,6 +26,16 @@ export function str(v: unknown): string | null {
 const SOLO_DIGITOS = /^\d{6,15}$/;
 
 /**
+ * Un identificador crudo del proveedor que ES un teléfono: dígitos con «+»
+ * opcional, nada más. Un BSUID (`CO.1A2B…`) no lo es aunque tenga dígitos: no
+ * se le quitan las letras para fabricar un número. Devuelve los dígitos.
+ */
+export function telefonoCrudo(v: unknown): string | null {
+  const t = (str(v) ?? '').trim();
+  return /^\+?\d{6,15}$/.test(t) ? t.replace(/^\+/, '') : null;
+}
+
+/**
  * La identidad de quien escribe. `phoneNumber` viene en E.164 con «+» y puede
  * faltar o ser nulo desde la llegada de los nombres de usuario (abril de 2026):
  * entonces se usa `businessScopedUserId`. `sender.id` es el teléfono sin «+»
@@ -54,11 +64,10 @@ export function identidadDeRemitente(sender: Obj): IdentidadRemitente {
  */
 function identidadDeParticipante(conversation: Obj): IdentidadRemitente {
   const participante = str(conversation.participantId) ?? '';
-  const digitos = participante.replace(/^\+/, '');
-  const esTelefono = SOLO_DIGITOS.test(digitos);
+  const telefono = telefonoCrudo(participante);
   return {
-    telefono: esTelefono ? digitos : '',
-    waUserId: esTelefono ? null : participante || null,
+    telefono: telefono ?? '',
+    waUserId: telefono ? null : participante || null,
     waParentUserId: null,
     waUsername: str(conversation.participantUsername),
     nombre: (str(conversation.participantName) ?? '').trim(),

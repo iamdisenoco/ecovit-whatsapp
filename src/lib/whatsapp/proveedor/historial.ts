@@ -36,7 +36,7 @@ import type {
 } from '../webhook/almacen';
 import { nombreUtil } from '../webhook/contactos-supabase';
 import { chatDeMensaje, resumen } from '../webhook/procesar';
-import { obj, str, type Obj } from './zernio-webhook';
+import { obj, str, telefonoCrudo, type Obj } from './zernio-webhook';
 import { ZERNIO_URL_BASE } from './zernio';
 import type { IdentidadRemitente } from './tipos';
 
@@ -179,11 +179,8 @@ function leerMensaje(crudo: unknown): MensajeRemoto | null {
   };
 }
 
-/** Solo dígitos, y solo si parece un teléfono (6 a 15). */
-function telefonoDe(v: unknown): string | null {
-  const d = (str(v) ?? '').replace(/\D/g, '');
-  return /^\d{6,15}$/.test(d) ? d : null;
-}
+/** La misma regla del webhook: el valor crudo tiene que ser un teléfono. */
+const telefonoDe = telefonoCrudo;
 
 /** Un elemento de `GET /v1/contacts` (la lista ya viene filtrada por cuenta). */
 export function leerContactoDeLista(crudo: unknown): ContactoRemoto | null {
@@ -512,11 +509,10 @@ function tipoDe(adjunto: { tipo: string | null } | undefined): ContentType {
 const ESTADOS_SALIENTE = new Set(['sent', 'delivered', 'read', 'failed']);
 
 function identidadDe(c: ConversacionRemota): IdentidadRemitente {
-  const digitos = (c.participanteId ?? '').replace(/^\+/, '');
-  const esTelefono = /^\d{6,15}$/.test(digitos);
+  const telefono = telefonoCrudo(c.participanteId);
   return {
-    telefono: esTelefono ? digitos : '',
-    waUserId: c.bsuid ?? (esTelefono ? null : c.participanteId),
+    telefono: telefono ?? '',
+    waUserId: c.bsuid ?? (telefono ? null : c.participanteId),
     waParentUserId: null,
     waUsername: null,
     nombre: (c.participanteNombre ?? '').trim(),
