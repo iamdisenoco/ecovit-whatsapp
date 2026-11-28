@@ -24,6 +24,12 @@ export interface ContactoFila {
   wa_user_id: string | null;
   wa_parent_user_id: string | null;
   wa_username: string | null;
+  /**
+   * Quién puso el nombre (migración 132 de ecovit-comercial): 'agenda' (el
+   * servidor, desde la agenda del número), 'persona' (alguien en la app; lo marca
+   * un disparador) o null (desconocido o relleno). `undefined`: no se leyó.
+   */
+  nombre_origen?: 'agenda' | 'persona' | null;
 }
 
 async function contactoPorBsuid(
@@ -78,18 +84,24 @@ export function nombreUtil(nombre: string | null | undefined): string | null {
 
 /**
  * La regla del nombre, la única: el nombre que hay que poner, o `null` si no
- * se toca. Solo cuando el contacto no tiene un nombre de verdad (vacío o el
- * relleno del teléfono/BSUID), y nunca un teléfono como nombre. Nunca pisa uno
- * puesto a mano. La usan el webhook, el historial y `contact.updated`.
+ * se toca. Nunca un teléfono como nombre y nunca sobre uno que puso una persona
+ * (`nombre_origen = 'persona'`). Se pone si el contacto no tiene un nombre de
+ * verdad (vacío o el relleno del teléfono/BSUID) o —solo si el nombre nuevo
+ * viene de la agenda— si el que tiene también lo puso la agenda: así un
+ * renombre en el celular llega a la app (Jon, 28-nov). Un nombre de origen
+ * desconocido (`null`) con letras no se toca. La usan el webhook, el historial y
+ * `contact.updated`.
  */
 export function nombreParaCompletar(
   existente: ContactoFila,
-  candidato: string | null | undefined
+  candidato: string | null | undefined,
+  deLaAgenda = true
 ): string | null {
   const nombre = nombreUtil(candidato);
-  if (!nombre || nombre === existente.name || !sinNombre(existente))
-    return null;
-  return nombre;
+  if (!nombre || nombre === existente.name) return null;
+  if (existente.nombre_origen === 'persona') return null;
+  if (sinNombre(existente)) return nombre;
+  return deLaAgenda && existente.nombre_origen === 'agenda' ? nombre : null;
 }
 
 /**
@@ -104,9 +116,11 @@ export function cambiosDeContacto(
   identidad: IdentidadRemitente
 ): Record<string, string> {
   const cambios: Record<string, string> = {};
+  // El nombre del perfil de WhatsApp no es de la agenda: solo llena un vacío.
   const nombre = nombreParaCompletar(
     existente,
-    identidad.nombre || identidad.waUsername
+    identidad.nombre || identidad.waUsername,
+    false
   );
   if (nombre) cambios.name = nombre;
   if (identidad.waUserId && identidad.waUserId !== existente.wa_user_id)
@@ -197,10 +211,57 @@ export async function buscarOCrearContactoSupabase(
 const TELEFONOS_POR_CONSULTA = 25;
 
 /**
+ * ¿Ya existe `contacts.nombre_origen`? La migración 132 se aplica antes de
+ * desplegar, pero si llegara a faltar, `completarNombres` no puede tumbar el
+ * webhook: con la primera respuesta «la columna no existe» se anota acá y se
+ * sigue con la regla vieja (solo vacío o relleno, sin escribir el origen).
+ * Exportado para las pruebas.
+ */
+export const columnaOrigen = { falta: false };
+
+function faltaColumnaOrigen(error: { code?: string; message?: string }) {
+  return (
+    error.code === '42703' ||
+    error.code === 'PGRST204' ||
+    /nombre_origen/.test(error.message ?? '')
+  );
+}
+
+async function leerPorTelefono(
+  db: SupabaseClient,
+  inq: Inquilino,
+  variantes: string[]
+): Promise<ContactoFila[]> {
+  for (;;) {
+    const { data, error } = await db
+      .from('contacts')
+      .select(
+        columnaOrigen.falta
+          ? COLUMNAS_CONTACTO
+          : `${COLUMNAS_CONTACTO}, nombre_origen`
+      )
+      .eq('account_id', inq.accountId)
+      .in('phone_normalized', variantes);
+    if (!error) return (data ?? []) as unknown as ContactoFila[];
+    if (!columnaOrigen.falta && faltaColumnaOrigen(error)) {
+      console.warn(
+        '[contactos] falta contacts.nombre_origen (migración 132): solo se completan los vacíos'
+      );
+      columnaOrigen.falta = true;
+      continue;
+    }
+    throw new ErrorAlmacen(
+      `No se pudieron buscar los contactos por teléfono: ${error.message}`
+    );
+  }
+}
+
+/**
  * Pone el nombre de la agenda a los contactos que YA existen, con la regla de
- * `nombreParaCompletar`. Nunca crea un contacto. El `update` es condicional al
- * nombre que se leyó: si alguien lo escribió a mano en el medio, no se pisa.
- * Devuelve cuántos nombres se pusieron.
+ * `nombreParaCompletar`, y lo marca `nombre_origen = 'agenda'`. Nunca crea un
+ * contacto. El `update` es condicional al nombre y al origen que se leyeron: si
+ * una persona lo escribió en el medio (el disparador lo deja 'persona'), no se
+ * pisa. Devuelve cuántos nombres se pusieron.
  */
 export async function completarNombresSupabase(
   db: SupabaseClient,
@@ -216,16 +277,7 @@ export async function completarNombresSupabase(
     const variantes = [
       ...new Set(tramo.flatMap((p) => phoneVariants(p.telefono))),
     ];
-    const { data, error } = await db
-      .from('contacts')
-      .select(COLUMNAS_CONTACTO)
-      .eq('account_id', inq.accountId)
-      .in('phone_normalized', variantes);
-    if (error)
-      throw new ErrorAlmacen(
-        `No se pudieron buscar los contactos por teléfono: ${error.message}`
-      );
-    const candidatos = ((data ?? []) as ContactoFila[]).map((c) => ({
+    const candidatos = (await leerPorTelefono(db, inq, variantes)).map((c) => ({
       ...c,
       phone: c.phone ?? '',
     }));
@@ -234,15 +286,30 @@ export async function completarNombresSupabase(
       if (!existente) continue;
       const nombre = nombreParaCompletar(existente, p.nombre);
       if (!nombre) continue;
-      let q = db
-        .from('contacts')
-        .update({ name: nombre, updated_at: new Date().toISOString() })
-        .eq('id', existente.id);
-      // Solo si sigue con el nombre que se leyó: no pisa lo escrito en el medio.
+      const conOrigen = existente.nombre_origen !== undefined;
+      const ahora = new Date().toISOString();
+      let q = (
+        conOrigen
+          ? db
+              .from('contacts')
+              .update({
+                name: nombre,
+                nombre_origen: 'agenda',
+                updated_at: ahora,
+              })
+          : db.from('contacts').update({ name: nombre, updated_at: ahora })
+      ).eq('id', existente.id);
+      // Solo si sigue con el nombre (y el origen) que se leyó: no pisa lo
+      // escrito en el medio.
       q =
         existente.name === null
           ? q.is('name', null)
           : q.eq('name', existente.name);
+      if (conOrigen)
+        q =
+          existente.nombre_origen === null
+            ? q.is('nombre_origen', null)
+            : q.eq('nombre_origen', existente.nombre_origen!);
       const { data: cambiados, error: errUpd } = await q.select('id');
       if (errUpd) {
         console.error(
@@ -254,6 +321,7 @@ export async function completarNombresSupabase(
       if (cambiados && cambiados.length > 0) {
         completados++;
         existente.name = nombre;
+        if (conOrigen) existente.nombre_origen = 'agenda';
       }
     }
   }

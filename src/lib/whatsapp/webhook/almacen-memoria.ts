@@ -49,6 +49,8 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
     telefono: string;
     waUserId: string | null;
     nombre: string;
+    /** `contacts.nombre_origen`: 'agenda', 'persona' o null (desconocido). */
+    nombreOrigen?: 'agenda' | 'persona' | null;
   }> = [];
   conversaciones: Array<
     ConversacionFila & {
@@ -158,11 +160,13 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
           wa_user_id: c.waUserId,
           wa_parent_user_id: null,
           wa_username: null,
+          nombre_origen: c.nombreOrigen ?? null,
         },
         p.nombre
       );
       if (!nombre) continue;
       c.nombre = nombre;
+      c.nombreOrigen = 'agenda';
       completados++;
     }
     return completados;
