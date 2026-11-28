@@ -435,6 +435,16 @@ describe('ProveedorZernio: conexión y adjuntos', () => {
     expect(e.detalle).toContain('400');
   });
 
+  it('el detalle que llega a la pantalla no nombra al proveedor', async () => {
+    const f = vi.fn(async () =>
+      respuesta(401, { error: 'Invalid Zernio API key. See zernio.com/docs' })
+    );
+    const e = await zernio(f as unknown as typeof fetch).verificarConexion();
+    expect(e.conectado).toBe(false);
+    expect(e.detalle).not.toMatch(/zernio/i);
+    expect(e.detalle).toContain('Invalid WhatsApp API key');
+  });
+
   it('descargarAdjunto: con Bearer solo a zernio.com', async () => {
     const f = vi.fn(async () =>
       respuesta(200, 'bytes', { 'content-type': 'image/jpeg' })

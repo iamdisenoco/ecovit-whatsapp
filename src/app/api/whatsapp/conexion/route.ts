@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getCurrentAccount, toErrorResponse } from '@/lib/auth/account';
 import { hasMinRole } from '@/lib/auth/roles';
 import { leerConfigWhatsApp } from '@/lib/whatsapp/config-servidor';
+import { sinNombreDeProveedor } from '@/lib/whatsapp/proveedor/zernio';
 import {
   crearProveedor,
   nombreProveedorOnull,
@@ -81,7 +82,7 @@ export async function GET() {
     return NextResponse.json({
       ...base,
       esDireccion: true,
-      detalle: estado.detalle,
+      detalle: sinNombreDeProveedor(estado.detalle),
       numero: estado.numero,
       nombre: estado.nombre,
       calidad: estado.calidad,

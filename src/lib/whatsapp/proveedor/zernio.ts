@@ -36,6 +36,14 @@ import {
 
 export const ZERNIO_URL_BASE = 'https://zernio.com/api/v1';
 
+/**
+ * Lo que llega a la pantalla no nombra al proveedor (AGENTS.md): un texto que
+ * venga de su respuesta se sanea antes de salir del servidor.
+ */
+export function sinNombreDeProveedor(texto: string): string {
+  return texto.replace(/zernio/gi, 'WhatsApp');
+}
+
 /** El tope del bucket `chat-media` (16 MB). Un adjunto más grande no se baja. */
 export const ADJUNTO_MAX_BYTES = 16 * 1024 * 1024;
 
@@ -171,7 +179,10 @@ export class ProveedorZernio implements ProveedorWhatsApp {
     // no es «no sé si salió», así que no queda dudoso.
     const dudoso = estado >= 500 || estado === 408;
     // Zernio responde { error, type, code }: los tres ahorran tiempo de diagnóstico.
-    const detalle = str(json.error) ?? texto.slice(0, 300) ?? '';
+    // El texto del proveedor puede nombrarlo y llega a la pantalla: se sanea.
+    const detalle = sinNombreDeProveedor(
+      str(json.error) ?? texto.slice(0, 300) ?? ''
+    );
     const codigo = str(json.code);
     throw new ErrorProveedor(
       `La conexión de WhatsApp respondió ${estado}${codigo ? ` (${codigo})` : ''}: ${detalle}`,
