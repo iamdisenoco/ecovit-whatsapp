@@ -12,6 +12,7 @@ import type { Conversation, Message, Contact, ConversationStatus } from "@/types
 import { useRealtime } from "@/hooks/use-realtime";
 import { ConversationList } from "@/components/inbox/conversation-list";
 import { parseInboxFilter } from "@/lib/inbox/inbox-filters";
+import { filaTrasMensaje } from "@/lib/inbox/vista-previa";
 import { MessageThread } from "@/components/inbox/message-thread";
 import { ContactSidebar } from "@/components/inbox/contact-sidebar";
 import { toast } from "sonner";
@@ -271,19 +272,12 @@ function InboxPageInner() {
           setConversations((prev) =>
             prev.map((c) =>
               c.id === newMsg.conversation_id
-                ? {
-                    ...c,
-                    last_message_text: newMsg.content_text ?? "",
-                    last_message_at: newMsg.created_at,
-                    unread_count:
-                      activeConversation?.id === newMsg.conversation_id
-                        ? 0
-                        : c.unread_count + 1,
-                    // Un eco del celular reinicia la hora en que vuelve el bot.
-                    ...(newMsg.desde_celular
-                      ? { ultimo_eco_celular_at: newMsg.created_at }
-                      : {}),
-                  }
+                ? // La historia importada (más vieja) no suma no leídos.
+                  filaTrasMensaje(
+                    c,
+                    newMsg,
+                    activeConversation?.id === newMsg.conversation_id,
+                  )
                 : c,
             ),
           );
