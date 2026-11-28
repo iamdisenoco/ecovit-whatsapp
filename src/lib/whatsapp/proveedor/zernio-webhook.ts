@@ -163,6 +163,29 @@ export function leerWebhookZernio(json: unknown): EventoWhatsApp[] {
     ];
   }
 
+  // La agenda del celular (coexistencia) agregó o renombró un contacto. El
+  // mismo evento sale de Google/Outlook: solo se toma el de WhatsApp. Un
+  // `deleted` no borra nada en la app.
+  if (nombre === 'contact.updated') {
+    const contacto = obj(sobre.contact);
+    const contactoId = str(contacto.id);
+    const plataforma = str(cuenta.platform);
+    if (
+      !contactoId ||
+      str(contacto.changeType) === 'deleted' ||
+      (plataforma !== null && plataforma !== 'whatsapp')
+    )
+      return [{ ...base, tipo: 'ignorado', nombre }];
+    return [
+      {
+        ...base,
+        tipo: 'contacto_actualizado',
+        contactoId,
+        cuentaId: str(cuenta.accountId) ?? str(cuenta.id),
+      },
+    ];
+  }
+
   const esWhatsApp = str(mensaje.platform) === 'whatsapp';
 
   if (nombre === 'message.received' && esWhatsApp) {

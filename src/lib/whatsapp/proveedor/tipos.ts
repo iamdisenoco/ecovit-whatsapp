@@ -115,6 +115,18 @@ export interface EventoCuentaDesconectada extends EventoBase {
   motivo: string | null;
 }
 
+/**
+ * La agenda del número agregó o le cambió el nombre a un contacto (Zernio:
+ * `contact.updated`). Solo trae el id: el nombre se lee aparte.
+ */
+export interface EventoContactoActualizado extends EventoBase {
+  tipo: 'contacto_actualizado';
+  /** Id del contacto en el proveedor. */
+  contactoId: string;
+  /** La cuenta conectada que avisa (Zernio: `account.accountId`). */
+  cuentaId: string | null;
+}
+
 export interface EventoPrueba extends EventoBase {
   tipo: 'prueba';
   mensaje: string | null;
@@ -131,6 +143,7 @@ export type EventoWhatsApp =
   | EventoMensajeEnviado
   | EventoEstado
   | EventoCuentaDesconectada
+  | EventoContactoActualizado
   | EventoPrueba
   | EventoIgnorado;
 

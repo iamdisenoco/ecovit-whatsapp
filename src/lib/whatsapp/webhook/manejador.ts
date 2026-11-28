@@ -13,6 +13,10 @@
 // ============================================================
 
 import { readCappedBody } from '../webhook-body';
+import {
+  LimiteDeVelocidad,
+  type LectorContactos,
+} from '../proveedor/historial';
 import { ErrorConfiguracion, type ProveedorWhatsApp } from '../proveedor/tipos';
 import { EventoEnCurso, type AlmacenWhatsApp } from './almacen';
 import { guardarAdjuntoEntrante } from './adjuntos';
@@ -38,6 +42,11 @@ export interface DependenciasWebhook {
     trabajo: TrabajoMotores,
     proveedor: ProveedorWhatsApp['nombre']
   ) => Promise<void>;
+  /**
+   * Para `contact.updated`: cómo leer un contacto del proveedor (solo GET) y la
+   * cuenta del número. `null` o ausente: el evento se reconoce y no se aplica.
+   */
+  contactos?: () => { lector: LectorContactos; cuentaId: string | null } | null;
   /** Tiempo total antes de responder 503 (por defecto PRESUPUESTO_MS). */
   presupuestoMs?: number;
 }
@@ -127,7 +136,11 @@ export async function manejarWebhook(
 
   const eventos = proveedor.leerWebhook(datos);
   const almacen = deps.almacen();
-  const promesa = new Procesador(almacen).procesar(eventos);
+  const contactos = deps.contactos?.() ?? null;
+  const promesa = new Procesador(almacen, {
+    contactos: contactos?.lector ?? null,
+    cuentaId: contactos?.cuentaId ?? null,
+  }).procesar(eventos);
   let temporizador: ReturnType<typeof setTimeout> | undefined;
   const agotado = new Promise<typeof AGOTADO>((r) => {
     temporizador = setTimeout(
@@ -154,6 +167,11 @@ export async function manejarWebhook(
     if (err instanceof EventoEnCurso) {
       console.warn('[webhook]', err.message);
       return vuelvaLuego('El evento se está procesando');
+    }
+    // El proveedor pidió esperar al leer un contacto: que reintente más tarde.
+    if (err instanceof LimiteDeVelocidad) {
+      console.warn('[webhook] el proveedor pidió esperar; se pide reintentar');
+      return vuelvaLuego('Demasiados pedidos; reintente');
     }
     console.error(
       '[webhook] no se pudo procesar; el proveedor reintentará:',
