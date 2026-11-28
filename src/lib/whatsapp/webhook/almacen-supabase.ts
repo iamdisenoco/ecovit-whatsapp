@@ -35,6 +35,7 @@ import {
   type EstadoEvento,
   type Inquilino,
   type MensajeNuevo,
+  type ResumenHistoria,
 } from './almacen';
 
 export const BUCKET_ADJUNTOS = 'chat-media';
@@ -437,6 +438,37 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
       console.error(
         '[webhook] no se pudo actualizar el resumen de la conversación:',
         error.message
+      );
+  }
+
+  async registrarHistoria(
+    conversacionId: string,
+    h: ResumenHistoria
+  ): Promise<void> {
+    // Sin `unread_count`, sin reabrir y sin `updated_at` a mano: es historia.
+    // `last_inbound_at` lo mueve el disparador de `messages` con la fecha
+    // original (GREATEST), así que no revive la ventana de 24 h.
+    const ultimoEn = new Date(h.ultimoEn).toISOString();
+    const { error } = await this.db
+      .from('conversations')
+      .update({ last_message_text: h.resumen, last_message_at: ultimoEn })
+      .eq('id', conversacionId)
+      .or(`last_message_at.is.null,last_message_at.lt.${ultimoEn}`);
+    if (error)
+      throw new ErrorAlmacen(
+        `No se pudo poner el resumen de la historia: ${error.message}`
+      );
+    if (!h.primerEntranteEn) return;
+    // Así el primer mensaje que llegue después no cuenta como «primer
+    // entrante» de un contacto que ya tenía historia.
+    const { error: errPrimero } = await this.db
+      .from('conversations')
+      .update({ first_inbound_at: new Date(h.primerEntranteEn).toISOString() })
+      .eq('id', conversacionId)
+      .is('first_inbound_at', null);
+    if (errPrimero)
+      throw new ErrorAlmacen(
+        `No se pudo poner el primer entrante de la historia: ${errPrimero.message}`
       );
   }
 

@@ -63,6 +63,15 @@ export interface MensajeNuevo {
   desde_celular: boolean;
 }
 
+export interface ResumenHistoria {
+  /** Texto del último mensaje de la tanda (o `[tipo]`). */
+  resumen: string;
+  /** Fecha ORIGINAL de ese mensaje. */
+  ultimoEn: string;
+  /** Fecha original del primer mensaje del cliente en la tanda, si hubo. */
+  primerEntranteEn: string | null;
+}
+
 export interface EstadoEntrante {
   wamid: string;
   status: 'sent' | 'delivered' | 'read' | 'failed';
@@ -145,6 +154,16 @@ export interface AlmacenWhatsApp {
   ): Promise<{ primerEntrante: boolean }>;
 
   registrarSaliente(conversacionId: string, resumen: string): Promise<void>;
+
+  /**
+   * La historia importada (`proveedor/historial.ts`): pone el resumen y la fecha
+   * del último mensaje solo si son más nuevos que lo que ya hay, y el primer
+   * entrante solo si no había. No sube no leídos, no reabre, no toca al bot.
+   */
+  registrarHistoria(
+    conversacionId: string,
+    historia: ResumenHistoria
+  ): Promise<void>;
 
   /** Aplica un estado sin retroceder; si la fila todavía no existe, lo deja pendiente. */
   aplicarEstado(accountId: string, estado: EstadoEntrante): Promise<void>;

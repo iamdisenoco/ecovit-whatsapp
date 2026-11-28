@@ -22,6 +22,7 @@ import type {
   EstadoEvento,
   Inquilino,
   MensajeNuevo,
+  ResumenHistoria,
 } from './almacen';
 
 /** La ventana de conciliación de la base (`almacen-supabase.ts`). */
@@ -51,6 +52,7 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
       contact_id: string;
       unread_count: number;
       last_message_text: string | null;
+      last_message_at: string | null;
     }
   > = [];
   referencias = new Map<string, ReferenciaConversacion>();
@@ -140,6 +142,7 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
       last_inbound_at: null,
       unread_count: 0,
       last_message_text: null,
+      last_message_at: null,
     };
     this.conversaciones.push(nueva);
     return { conversacion: { ...nueva }, creada: true };
@@ -186,6 +189,16 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
     }
     const id = fila.id ?? randomUUID();
     this.mensajes.push({ ...fila, id, error_code: null, error_title: null });
+    // Como `track_conversation_message_times`: el entrante mueve
+    // `last_inbound_at` con su fecha ORIGINAL y sin retroceder.
+    const conv = this.conversaciones.find((c) => c.id === fila.conversation_id);
+    if (conv && fila.sender_type === 'customer') {
+      const previo = conv.last_inbound_at
+        ? Date.parse(conv.last_inbound_at)
+        : -Infinity;
+      if (Date.parse(fila.created_at) > previo)
+        conv.last_inbound_at = fila.created_at;
+    }
     // Los estados que llegaron antes que la fila (pending_message_statuses).
     const parked = this.pendientes.filter((p) => p.wamid === fila.message_id);
     if (parked.length) {
@@ -263,6 +276,18 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
 
   async registrarSaliente(conversacionId: string, resumen: string) {
     this.conversacion(conversacionId).last_message_text = resumen;
+  }
+
+  async registrarHistoria(conversacionId: string, h: ResumenHistoria) {
+    const c = this.conversacion(conversacionId);
+    if (
+      !c.last_message_at ||
+      Date.parse(c.last_message_at) < Date.parse(h.ultimoEn)
+    ) {
+      c.last_message_text = h.resumen;
+      c.last_message_at = h.ultimoEn;
+    }
+    if (h.primerEntranteEn) c.first_inbound_at ??= h.primerEntranteEn;
   }
 
   async aplicarEstado(_accountId: string, estado: EstadoEntrante) {
