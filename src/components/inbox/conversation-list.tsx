@@ -16,6 +16,7 @@ import { formatDistanceToNow } from "date-fns";
 import { useLocale, useTranslations } from "next-intl";
 import { getDateLocale } from "@/i18n/date-locale";
 import { Input } from "@/components/ui/input";
+import { textoVistaPrevia } from "@/lib/inbox/vista-previa";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -485,7 +486,7 @@ function ConversationItem({
         </div>
         <div className="mt-0.5 flex items-center justify-between gap-2">
           <p className="truncate text-xs text-muted-foreground">
-            {conversation.last_message_text || t("noMessagesYet")}
+            {textoVistaPrevia(conversation.last_message_text) || t("noMessagesYet")}
           </p>
           <div className="flex shrink-0 items-center gap-1.5">
             {calladoPorCelular(conversation) && (

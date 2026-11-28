@@ -36,6 +36,7 @@ import {
   puedeVolverPorCelular,
 } from './coexistencia';
 import { nombreUtil } from './contactos-supabase';
+import { textoVistaPrevia } from '../textos-mensaje';
 
 /** Texto que queda en el chat mientras el adjunto no se haya bajado. */
 export const ADJUNTO_SIN_DESCARGAR = 'Adjunto recibido, sin descargar';
@@ -94,7 +95,7 @@ export function contentTypeDe(
 }
 
 export function resumen(texto: string | null, tipo: ContentType): string {
-  return texto?.trim() ? texto : `[${tipo}]`;
+  return texto?.trim() ? textoVistaPrevia(texto) : `[${tipo}]`;
 }
 
 /**

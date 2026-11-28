@@ -27,6 +27,7 @@ import { format } from "date-fns";
 import { ReplyQuote } from "./reply-quote";
 import { MessageReactions } from "./message-reactions";
 import { LinkifyText } from "@/lib/inbox/linkify-text";
+import { textoParaMostrar } from "@/lib/whatsapp/textos-mensaje";
 import {
   MediaAudioBubble,
   MediaDocumentBubble,
@@ -198,7 +199,7 @@ function MessageContent({
     case "text":
       return (
         <p className="whitespace-pre-wrap break-words text-sm">
-          <LinkifyText text={message.content_text ?? ""} isAgent={isAgent} />
+          <LinkifyText text={textoParaMostrar(message.content_text)} isAgent={isAgent} />
         </p>
       );
 

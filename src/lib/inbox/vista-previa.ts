@@ -1,4 +1,5 @@
 import type { Conversation, Message } from "@/types";
+import { textoVistaPrevia } from "@/lib/whatsapp/textos-mensaje";
 
 /** Lo que tiene más de esto no es un mensaje que acaba de llegar. */
 const RECIENTE_MS = 24 * 60 * 60 * 1000;
@@ -24,10 +25,16 @@ export function filaTrasMensaje(
   const reciente = Number.isFinite(cuando) && ahora - cuando <= RECIENTE_MS;
   return {
     ...c,
-    last_message_text: m.content_text ?? "",
+    last_message_text: textoVistaPrevia(m.content_text),
     last_message_at: m.created_at,
     unread_count: activa ? 0 : reciente ? c.unread_count + 1 : c.unread_count,
     // Un eco del celular reinicia la hora en que vuelve el bot.
     ...(m.desde_celular ? { ultimo_eco_celular_at: m.created_at } : {}),
   };
 }
+
+/**
+ * El texto de la fila en la lista: un «[Unsupported message]» que ya esté
+ * guardado sale en español y de una tarjeta de contacto solo el nombre.
+ */
+export { textoVistaPrevia };

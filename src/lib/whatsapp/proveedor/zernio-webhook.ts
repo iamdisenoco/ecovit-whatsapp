@@ -13,6 +13,12 @@ import type {
   ReferenciaConversacion,
   TipoAdjunto,
 } from './tipos';
+import {
+  ARCHIVO_NO_MOSTRADO,
+  esNoSoportado,
+  textoContactoCompartido,
+  type TarjetaContacto,
+} from '../textos-mensaje';
 
 export type Obj = Record<string, unknown>;
 
@@ -103,6 +109,58 @@ function adjuntos(lista: unknown): AdjuntoEntrante[] {
     });
   });
   return salida;
+}
+
+/** El código de WhatsApp para «Message type unknown». */
+export const CODIGO_TIPO_DESCONOCIDO = 131051;
+
+function tarjetaDe(crudo: unknown): TarjetaContacto {
+  const c = obj(crudo);
+  const n = obj(c.name);
+  const armado = [str(n.first_name), str(n.last_name)]
+    .filter((x): x is string => !!x)
+    .join(' ');
+  let nombre = (str(n.formatted_name) ?? armado).trim() || null;
+  // Un «nombre» que es un número no va en la vista previa.
+  if (nombre && (nombre.match(/\d/g) ?? []).length >= 6) nombre = null;
+  const telefonos = (Array.isArray(c.phones) ? c.phones : [])
+    .map((p) => str(obj(p).phone)?.trim() ?? null)
+    .filter((t): t is string => !!t);
+  return { nombre, telefonos };
+}
+
+/**
+ * El texto de un mensaje del proveedor, en español:
+ * - tarjeta de contacto (`metadata.contacts`) → «Contacto compartido: Ana» y,
+ *   abajo, el teléfono (la vista previa muestra solo la primera línea);
+ * - 131051 de `coexistence_history` → `sinContenido`: un mensaje vacío con la
+ *   fecha de la sincronización. El importador no lo guarda;
+ * - cualquier otro «[Unsupported message]» (131052, archivo que WhatsApp no
+ *   pudo bajar, u otro) → `ARCHIVO_NO_MOSTRADO`.
+ * En el webhook, que `metadata.contacts` y `metadata.unsupported` lleguen con
+ * la misma forma que en la bandeja está sin verificar en la documentación.
+ */
+export function leerTextoMensaje(
+  texto: string | null,
+  metadata: Obj
+): { texto: string | null; sinContenido: boolean; codigo: number | null } {
+  const noSoportado = obj(metadata.unsupported);
+  const codigo = numeroOnull(noSoportado.code);
+  const tarjetas = Array.isArray(metadata.contacts) ? metadata.contacts : [];
+  if (tarjetas.length > 0)
+    return {
+      texto: textoContactoCompartido(tarjetas.map(tarjetaDe)),
+      sinContenido: false,
+      codigo,
+    };
+  if (
+    codigo === CODIGO_TIPO_DESCONOCIDO &&
+    str(metadata.source) === 'coexistence_history'
+  )
+    return { texto, sinContenido: true, codigo };
+  if (esNoSoportado(texto) || (!texto && Object.keys(noSoportado).length > 0))
+    return { texto: ARCHIVO_NO_MOSTRADO, sinContenido: false, codigo };
+  return { texto, sinContenido: false, codigo };
 }
 
 function referencia(mensaje: Obj, cuenta: Obj): ReferenciaConversacion {
@@ -207,7 +265,10 @@ export function leerWebhookZernio(json: unknown): EventoWhatsApp[] {
         mensajeId,
         referencia: referencia(mensaje, cuenta),
         remitente: identidadDeRemitente(obj(mensaje.sender)),
-        texto: str(mensaje.text),
+        texto: leerTextoMensaje(str(mensaje.text), {
+          ...metadata,
+          ...obj(mensaje.metadata),
+        }).texto,
         adjuntos: adjuntos(mensaje.attachments),
         enviadoEn:
           str(mensaje.sentAt) ?? base.generadoEn ?? new Date().toISOString(),
@@ -235,7 +296,10 @@ export function leerWebhookZernio(json: unknown): EventoWhatsApp[] {
         mensajeId,
         referencia: referencia(mensaje, cuenta),
         destinatario: identidadDeParticipante(obj(sobre.conversation)),
-        texto: str(mensaje.text),
+        texto: leerTextoMensaje(str(mensaje.text), {
+          ...metadata,
+          ...obj(mensaje.metadata),
+        }).texto,
         adjuntos: adjuntos(mensaje.attachments),
         enviadoEn:
           str(mensaje.sentAt) ?? base.generadoEn ?? new Date().toISOString(),
