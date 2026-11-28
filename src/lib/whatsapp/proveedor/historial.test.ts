@@ -479,6 +479,7 @@ describe('importarHistorial: cursor y reanudación', () => {
     expect(leerCursor(r1.cursor).enCurso).toEqual({
       id: 'conv-0',
       cursor: '6',
+      creada: true,
     });
 
     const pedidosAntes = z.pedidosMensajes;
@@ -555,10 +556,79 @@ describe('importarHistorial: el chat', () => {
     await importarHistorial({ ...base, almacen: a, fuente: z });
     const c = a.conversaciones[0];
     expect(c.status).toBe('closed');
-    expect(c.closed_at).toBe(CONECTADO);
+    // En sus fechas reales: del primer al último mensaje importado.
+    expect(c.created_at).toBe('2026-06-03T10:00:00.000Z');
+    expect(c.closed_at).toBe('2026-06-03T12:00:00.000Z');
     expect(c.last_reply_at! < c.last_inbound_at!).toBe(true);
     expect(isAwaitingReply(comoBandeja(c))).toBe(false);
     expect(applyInboxFilter([comoBandeja(c)], 'waiting', AHORA)).toEqual([]);
+  });
+
+  it('las fechas del chat abarcan todas las páginas, también entre tramos', async () => {
+    // De una vez, con páginas de 3.
+    const z = bandeja(1, 7);
+    const a = almacen();
+    await importarHistorial({
+      ...base,
+      almacen: a,
+      fuente: z,
+      mensajesPorPagina: 3,
+    });
+    expect(a.conversaciones[0].created_at).toBe('2026-06-03T10:00:00.000Z');
+    expect(a.conversaciones[0].closed_at).toBe('2026-06-03T16:00:00.000Z');
+
+    // Cortado a mitad del chat: el segundo tramo sigue corriendo las fechas.
+    const z2 = bandeja(1, 7);
+    const b = almacen();
+    let reloj = AHORA;
+    const original = z2.mensajes.bind(z2);
+    z2.mensajes = async (...x) => {
+      reloj += 10_000;
+      return original(...x);
+    };
+    const r1 = await importarHistorial({
+      ...base,
+      ahora: () => reloj,
+      almacen: b,
+      fuente: z2,
+      mensajesPorPagina: 3,
+      presupuestoMs: 15_000,
+    });
+    expect(r1.terminado).toBe(false);
+    expect(b.conversaciones[0].closed_at).toBe('2026-06-03T15:00:00.000Z');
+    await importarHistorial({
+      ...base,
+      ahora: () => reloj,
+      almacen: b,
+      fuente: z2,
+      cursor: r1.cursor,
+      mensajesPorPagina: 3,
+      presupuestoMs: 1_000_000,
+    });
+    expect(b.conversaciones[0].created_at).toBe('2026-06-03T10:00:00.000Z');
+    expect(b.conversaciones[0].closed_at).toBe('2026-06-03T16:00:00.000Z');
+  });
+
+  it('a un chat que ya existía no le cambia las fechas', async () => {
+    const z = bandeja(1, 7);
+    const a = almacen();
+    const { contactoId } = await a.buscarOCrearContacto(a.inquilino, {
+      telefono: telefono(0),
+      waUserId: null,
+      waParentUserId: null,
+      waUsername: null,
+      nombre: 'X',
+    });
+    await a.buscarOCrearConversacion(a.inquilino, contactoId);
+    const creado = a.conversaciones[0].created_at;
+    await importarHistorial({
+      ...base,
+      almacen: a,
+      fuente: z,
+      mensajesPorPagina: 3,
+    });
+    expect(a.conversaciones[0].created_at).toBe(creado);
+    expect(a.conversaciones[0].closed_at).toBeNull();
   });
 
   it('un chat que ya existía no cambia de estado', async () => {

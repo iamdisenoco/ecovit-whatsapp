@@ -55,6 +55,7 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
       last_message_text: string | null;
       last_message_at: string | null;
       closed_at?: string | null;
+      created_at?: string;
       last_reply_at?: string | null;
     }
   > = [];
@@ -143,6 +144,7 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
       contact_id: contactoId,
       status: opciones?.cerradaEn ? 'closed' : 'open',
       closed_at: opciones?.cerradaEn ?? null,
+      created_at: opciones?.creadaEn ?? new Date().toISOString(),
       assigned_agent_id: null,
       ai_autoreply_disabled: false,
       ai_handoff_summary: null,
@@ -319,6 +321,17 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
       c.last_message_at = h.ultimoEn;
     }
     if (h.primerEntranteEn) c.first_inbound_at ??= h.primerEntranteEn;
+  }
+
+  async ajustarFechasHistoria(id: string, desde: string, hasta: string) {
+    const c = this.conversacion(id);
+    if (!c.created_at || Date.parse(desde) < Date.parse(c.created_at))
+      c.created_at = desde;
+    if (
+      c.status === 'closed' &&
+      (!c.closed_at || Date.parse(hasta) > Date.parse(c.closed_at))
+    )
+      c.closed_at = hasta;
   }
 
   async aplicarEstado(_accountId: string, estado: EstadoEntrante) {

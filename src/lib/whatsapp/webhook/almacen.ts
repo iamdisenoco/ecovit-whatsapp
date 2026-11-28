@@ -67,6 +67,8 @@ export interface MensajeNuevo {
 export interface OpcionesConversacionNueva {
   /** Nace cerrado en esa fecha (la historia: no queda «esperando respuesta»). */
   cerradaEn?: string;
+  /** Su `created_at`: la historia lo pone en la fecha de su primer mensaje. */
+  creadaEn?: string;
 }
 
 export interface ResumenHistoria {
@@ -176,6 +178,18 @@ export interface AlmacenWhatsApp {
   registrarHistoria(
     conversacionId: string,
     historia: ResumenHistoria
+  ): Promise<void>;
+
+  /**
+   * Solo para un chat que CREÓ la historia: lleva `created_at` hacia atrás y
+   * `closed_at` hacia adelante si `desde`/`hasta` son más extremos. Así el
+   * tablero de la dirección lo cuenta en sus fechas reales. No reabre ni
+   * toca un chat que alguien ya reabrió.
+   */
+  ajustarFechasHistoria(
+    conversacionId: string,
+    desde: string,
+    hasta: string
   ): Promise<void>;
 
   /** Aplica un estado sin retroceder; si la fila todavía no existe, lo deja pendiente. */

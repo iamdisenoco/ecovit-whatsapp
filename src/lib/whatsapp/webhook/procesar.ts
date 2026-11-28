@@ -110,6 +110,8 @@ export async function chatDeMensaje(
   conversacion: ConversacionFila;
   contactoId: string;
   contactoCreado: boolean;
+  /** `true` si este llamado creó la conversación. */
+  conversacionCreada: boolean;
 } | null> {
   if (referencia.conversacionId) {
     const porReferencia = await almacen.buscarConversacionPorReferencia(
@@ -121,6 +123,7 @@ export async function chatDeMensaje(
         conversacion: porReferencia,
         contactoId: porReferencia.contact_id,
         contactoCreado: false,
+        conversacionCreada: false,
       };
     }
   }
@@ -130,7 +133,7 @@ export async function chatDeMensaje(
     inq,
     identidad
   );
-  const { conversacion } = await almacen.buscarOCrearConversacion(
+  const { conversacion, creada } = await almacen.buscarOCrearConversacion(
     inq,
     contactoId,
     nueva
@@ -138,7 +141,12 @@ export async function chatDeMensaje(
   if (referencia.conversacionId) {
     await almacen.guardarReferencia(conversacion.id, referencia);
   }
-  return { conversacion, contactoId, contactoCreado: creado };
+  return {
+    conversacion,
+    contactoId,
+    contactoCreado: creado,
+    conversacionCreada: creada,
+  };
 }
 
 export class Procesador {

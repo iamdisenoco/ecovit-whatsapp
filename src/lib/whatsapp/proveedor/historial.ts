@@ -267,13 +267,13 @@ export function esperaDe(h: Headers, ahora = Date.now()): number {
  * Dónde va la importación. Opaco para el navegador (base64url de JSON):
  * - `pagina`: el cursor de Zernio de la página de chats en curso (null = la primera);
  * - `hechas`: los chats de ESA página que ya se terminaron;
- * - `enCurso`: el chat a medias y el cursor de sus mensajes;
+ * - `enCurso`: el chat a medias, el cursor de sus mensajes y si lo creó la historia;
  * - `listas`: cuántos chats van en total (para el avance).
  */
 export interface EstadoImportacion {
   pagina: string | null;
   hechas: string[];
-  enCurso: { id: string; cursor: string } | null;
+  enCurso: { id: string; cursor: string; creada?: boolean } | null;
   listas: number;
 }
 
@@ -304,7 +304,11 @@ export function leerCursor(
         : [],
       enCurso:
         str(enCurso.id) && str(enCurso.cursor)
-          ? { id: str(enCurso.id)!, cursor: str(enCurso.cursor)! }
+          ? {
+              id: str(enCurso.id)!,
+              cursor: str(enCurso.cursor)!,
+              creada: enCurso.creada === true,
+            }
           : null,
       listas: typeof e.listas === 'number' && e.listas >= 0 ? e.listas : 0,
     };
@@ -489,18 +493,24 @@ export async function importarHistorial(
     // chat sin historia no se crea, y uno que ya existía no se toca.
     let conversacionId: string | null = null;
     let sinIdentidad = false;
+    const retomado = estado.enCurso?.id === conv.id ? estado.enCurso : null;
+    // ¿Lo creó la historia? Solo entonces se le ajustan las fechas.
+    let creada = retomado?.creada === true;
 
-    let cursor = estado.enCurso?.id === conv.id ? estado.enCurso.cursor : null;
+    let cursor = retomado?.cursor ?? null;
+    const guardarAvance = () => {
+      if (cursor) estado.enCurso = { id: conv.id, cursor, creada };
+    };
     for (;;) {
       if (queda() <= 0) {
-        if (cursor) estado.enCurso = { id: conv.id, cursor };
+        guardarAvance();
         return 'cortar';
       }
       const pagina = await pedir(() =>
         o.fuente.mensajes(o.cuentaId, conv.id, cursor, msjPorPagina)
       );
       if (pagina === 'cortar') {
-        if (cursor) estado.enCurso = { id: conv.id, cursor };
+        guardarAvance();
         return 'cortar';
       }
 
@@ -520,22 +530,39 @@ export async function importarHistorial(
         return true;
       });
 
+      // Las fechas reales de esta página: de su primer y su último mensaje.
+      const fechas = importables
+        .map((m) => new Date(m.creadoEn).toISOString())
+        .sort();
+      const desde = fechas[0];
+      const hasta = fechas[fechas.length - 1];
+
+      let recienCreada = false;
       if (importables.length > 0 && !conversacionId && !sinIdentidad) {
         const chat = await chatDeMensaje(
           o.almacen,
           inq,
           identidadDe(conv),
           { conversacionId: conv.id, cuentaId: conv.cuentaId ?? o.cuentaId },
-          // Si lo crea la historia, nace cerrado: no queda «esperando respuesta».
-          { cerradaEn: new Date(conexion).toISOString() }
+          // Si lo crea la historia, nace cerrado (no queda «esperando
+          // respuesta») y en sus fechas reales: así no infla el tablero el día
+          // de la importación ni el de la conexión.
+          { creadaEn: desde, cerradaEn: hasta }
         );
         if (!chat) {
           console.warn(
             `[historial] chat ${conv.id} sin teléfono ni BSUID: se salta`
           );
           sinIdentidad = true;
-        } else conversacionId = chat.conversacion.id;
+        } else {
+          conversacionId = chat.conversacion.id;
+          recienCreada = chat.conversacionCreada;
+          creada ||= chat.conversacionCreada;
+        }
       }
+      // Una página siguiente de un chat que creó la historia corre sus fechas.
+      if (conversacionId && creada && !recienCreada && importables.length > 0)
+        await o.almacen.ajustarFechasHistoria(conversacionId, desde, hasta);
 
       if (conversacionId && importables.length > 0) {
         const filas = importables.map((m) => filaDe(m, conversacionId!));

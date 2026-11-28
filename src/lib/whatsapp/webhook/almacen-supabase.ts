@@ -241,6 +241,8 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
         ...(nueva?.cerradaEn
           ? { status: 'closed', closed_at: nueva.cerradaEn }
           : {}),
+        // Ningún disparador de `conversations` pisa `created_at` (0110–0115).
+        ...(nueva?.creadaEn ? { created_at: nueva.creadaEn } : {}),
       })
       .select(COLUMNAS_CONVERSACION)
       .single();
@@ -494,6 +496,36 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
     if (errPrimero)
       throw new ErrorAlmacen(
         `No se pudo poner el primer entrante de la historia: ${errPrimero.message}`
+      );
+  }
+
+  async ajustarFechasHistoria(
+    conversacionId: string,
+    desde: string,
+    hasta: string
+  ): Promise<void> {
+    const d = new Date(desde).toISOString();
+    const h = new Date(hasta).toISOString();
+    const { error } = await this.db
+      .from('conversations')
+      .update({ created_at: d })
+      .eq('id', conversacionId)
+      .gt('created_at', d);
+    if (error)
+      throw new ErrorAlmacen(
+        `No se pudo ajustar la fecha del chat: ${error.message}`
+      );
+    // `stamp_conversation_closed_at` solo corre con UPDATE OF status: este no
+    // lo toca. Si alguien lo reabrió, se deja.
+    const { error: errCierre } = await this.db
+      .from('conversations')
+      .update({ closed_at: h })
+      .eq('id', conversacionId)
+      .eq('status', 'closed')
+      .lt('closed_at', h);
+    if (errCierre)
+      throw new ErrorAlmacen(
+        `No se pudo ajustar el cierre del chat: ${errCierre.message}`
       );
   }
 
