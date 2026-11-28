@@ -155,7 +155,10 @@ export class ProveedorZernio implements ProveedorWhatsApp {
         signal: AbortSignal.timeout(this.config.timeoutMs),
       });
     } catch (err) {
-      const motivo = err instanceof Error ? err.message : String(err);
+      // El motivo puede traer la URL del proveedor: se sanea, llega a la pantalla.
+      const motivo = sinNombreDeProveedor(
+        err instanceof Error ? err.message : String(err)
+      );
       throw new ErrorProveedor(
         `No hubo respuesta de la conexión de WhatsApp: ${motivo}`,
         {
