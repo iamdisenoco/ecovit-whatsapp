@@ -32,15 +32,18 @@ import {
 import {
   ErrorAlmacen,
   type AlmacenWhatsApp,
+  type ChatRecalculado,
   type Conciliacion,
   type ConversacionFila,
   type EstadoEntrante,
   type EstadoEvento,
   type Inquilino,
+  type MensajeGuardado,
   type MensajeNuevo,
   type OpcionesConversacionNueva,
   type ResumenHistoria,
 } from './almacen';
+import { resumen } from './procesar';
 
 export const BUCKET_ADJUNTOS = 'chat-media';
 export const COLUMNA_REFERENCIA = 'proveedor_conversacion_id';
@@ -339,6 +342,203 @@ export class AlmacenSupabase implements AlmacenWhatsApp {
         `No se pudieron guardar los mensajes: ${error.message}`
       );
     return data?.length ?? 0;
+  }
+
+  async mensajesPorWamid(
+    conversacionId: string,
+    wamids: string[]
+  ): Promise<MensajeGuardado[]> {
+    if (wamids.length === 0) return [];
+    const salida: MensajeGuardado[] = [];
+    // Tandas chicas: el `in()` viaja en la URL.
+    for (let i = 0; i < wamids.length; i += 50) {
+      const { data, error } = await this.db
+        .from('messages')
+        .select('id, message_id, media_url, content_text')
+        .eq('conversation_id', conversacionId)
+        .in('message_id', wamids.slice(i, i + 50));
+      if (error)
+        throw new ErrorAlmacen(
+          `No se pudieron leer los mensajes guardados: ${error.message}`
+        );
+      salida.push(...((data ?? []) as MensajeGuardado[]));
+    }
+    return salida;
+  }
+
+  async borrarMensajesSinContenido(
+    conversacionId: string,
+    wamids: string[],
+    texto: string
+  ): Promise<number> {
+    let n = 0;
+    for (let i = 0; i < wamids.length; i += 50) {
+      // El texto exacto va en el WHERE: si alguien lo cambió, no se borra.
+      const { data, error } = await this.db
+        .from('messages')
+        .delete()
+        .eq('conversation_id', conversacionId)
+        .in('message_id', wamids.slice(i, i + 50))
+        .eq('content_text', texto)
+        .select('id');
+      if (error) {
+        // Una reacción u otra fila colgada (RESTRICT) lo impide: se deja.
+        console.error(
+          '[historial] no se pudo borrar un mensaje vacío de la sincronización:',
+          error.message
+        );
+        continue;
+      }
+      n += data?.length ?? 0;
+    }
+    return n;
+  }
+
+  /** El primer o el último mensaje del chat que cumple `filtro`. */
+  private async extremo(
+    conversacionId: string,
+    ascendente: boolean,
+    filtro: 'todos' | 'entrante' | 'respuesta' = 'todos'
+  ): Promise<{
+    created_at: string;
+    content_text: string | null;
+    content_type: MensajeNuevo['content_type'];
+  } | null> {
+    let q = this.db
+      .from('messages')
+      .select('created_at, content_text, content_type')
+      .eq('conversation_id', conversacionId);
+    if (filtro === 'entrante') q = q.eq('sender_type', 'customer');
+    // Lo mismo que cuenta `track_conversation_message_times`.
+    if (filtro === 'respuesta')
+      q = q
+        .or('sender_type.eq.agent,ai_generated.is.true')
+        .neq('status', 'failed');
+    const { data, error } = await q
+      .order('created_at', { ascending: ascendente })
+      .limit(1)
+      .maybeSingle();
+    if (error)
+      throw new ErrorAlmacen(
+        `No se pudo leer el chat para recalcularlo: ${error.message}`
+      );
+    return (data as {
+      created_at: string;
+      content_text: string | null;
+      content_type: MensajeNuevo['content_type'];
+    } | null) ?? null;
+  }
+
+  /** ¿Hay algo que apunte a este chat y que borrarlo dejaría suelto? */
+  private async tieneAlgoColgado(conversacionId: string): Promise<boolean> {
+    for (const tabla of ['ai_usage_log', 'flow_runs', 'notifications']) {
+      const { count, error } = await this.db
+        .from(tabla)
+        .select('*', { count: 'exact', head: true })
+        .eq('conversation_id', conversacionId);
+      // Si no se puede saber, se toma como que sí: no se borra.
+      if (error || (count ?? 0) > 0) return true;
+    }
+    return false;
+  }
+
+  async recalcularChat(
+    conversacionId: string,
+    historiaAntesDe: string
+  ): Promise<ChatRecalculado> {
+    const { data: conv, error } = await this.db
+      .from('conversations')
+      .select(
+        'id, status, assigned_agent_id, ai_handoff_summary, ai_reply_count, created_at, closed_at'
+      )
+      .eq('id', conversacionId)
+      .maybeSingle();
+    if (error)
+      throw new ErrorAlmacen(`No se pudo leer el chat: ${error.message}`);
+    if (!conv) return 'borrado';
+    const corte = Date.parse(historiaAntesDe);
+    const deHistoria =
+      !!conv.created_at && Date.parse(conv.created_at as string) < corte;
+
+    const ultimo = await this.extremo(conversacionId, false);
+    if (!ultimo) {
+      if (
+        deHistoria &&
+        conv.status === 'closed' &&
+        !conv.assigned_agent_id &&
+        !conv.ai_handoff_summary &&
+        !conv.ai_reply_count &&
+        !(await this.tieneAlgoColgado(conversacionId))
+      ) {
+        // Las condiciones van también en el WHERE; lo demás que cuelgue del
+        // chat (mensajes, reacciones, el bot) es RESTRICT y lo frena la base.
+        const { data: borrado, error: errBorrar } = await this.db
+          .from('conversations')
+          .delete()
+          .eq('id', conversacionId)
+          .eq('status', 'closed')
+          .is('assigned_agent_id', null)
+          .select('id');
+        if (!errBorrar && (borrado?.length ?? 0) > 0) return 'borrado';
+        if (errBorrar)
+          console.error(
+            '[historial] el chat vacío no se pudo borrar; queda vacío:',
+            errBorrar.message
+          );
+      }
+      const { error: errVacio } = await this.db
+        .from('conversations')
+        .update({
+          last_message_text: null,
+          last_message_at: conv.created_at,
+          first_inbound_at: null,
+          last_inbound_at: null,
+          last_reply_at: null,
+        })
+        .eq('id', conversacionId);
+      if (errVacio)
+        throw new ErrorAlmacen(
+          `No se pudo dejar vacío el chat: ${errVacio.message}`
+        );
+      return 'vacio';
+    }
+
+    const [primero, primerEntrante, ultimoEntrante, ultimaRespuesta] =
+      await Promise.all([
+        this.extremo(conversacionId, true),
+        this.extremo(conversacionId, true, 'entrante'),
+        this.extremo(conversacionId, false, 'entrante'),
+        this.extremo(conversacionId, false, 'respuesta'),
+      ]);
+    // Directo a la tabla: los disparadores de `messages` (GREATEST) no corren
+    // con un UPDATE de `conversations`, así que estas fechas sí pueden bajar.
+    const cambios: Record<string, string | null> = {
+      last_message_text: resumen(ultimo.content_text, ultimo.content_type),
+      last_message_at: ultimo.created_at,
+      first_inbound_at: primerEntrante?.created_at ?? null,
+      last_inbound_at: ultimoEntrante?.created_at ?? null,
+      last_reply_at: ultimaRespuesta?.created_at ?? null,
+    };
+    if (deHistoria && primero) {
+      cambios.created_at = primero.created_at;
+      // Sin tocar `status`: `stamp_conversation_closed_at` no corre. Solo si
+      // sigue cerrado desde la historia (nadie lo cerró después).
+      if (
+        conv.status === 'closed' &&
+        conv.closed_at &&
+        Date.parse(conv.closed_at as string) < corte
+      )
+        cambios.closed_at = ultimo.created_at;
+    }
+    const { error: errCambio } = await this.db
+      .from('conversations')
+      .update(cambios)
+      .eq('id', conversacionId);
+    if (errCambio)
+      throw new ErrorAlmacen(
+        `No se pudo recalcular el chat: ${errCambio.message}`
+      );
+    return 'recalculado';
   }
 
   async buscarMensajePorWamid(

@@ -16,16 +16,19 @@ import type {
 } from '../proveedor/tipos';
 import type {
   AlmacenWhatsApp,
+  ChatRecalculado,
   Conciliacion,
   ConversacionFila,
   EstadoEntrante,
   EstadoEvento,
   Inquilino,
+  MensajeGuardado,
   MensajeNuevo,
   OpcionesConversacionNueva,
   ResumenHistoria,
 } from './almacen';
 import { nombreParaCompletar } from './contactos-supabase';
+import { resumen } from './procesar';
 import { phonesMatch } from '../phone-utils';
 
 /** La ventana de conciliación de la base (`almacen-supabase.ts`). */
@@ -286,6 +289,97 @@ export class AlmacenMemoria implements AlmacenWhatsApp {
     let n = 0;
     for (const f of filas) if (await this.insertarUna(f)) n++;
     return n;
+  }
+
+  /** Para simular algo colgado del chat (una nota, un flujo): no se borra. */
+  chatsConAlgoColgado = new Set<string>();
+
+  async mensajesPorWamid(
+    conversacionId: string,
+    wamids: string[]
+  ): Promise<MensajeGuardado[]> {
+    return this.mensajes
+      .filter(
+        (m) =>
+          m.conversation_id === conversacionId && wamids.includes(m.message_id)
+      )
+      .map((m) => ({
+        id: m.id,
+        message_id: m.message_id,
+        media_url: m.media_url,
+        content_text: m.content_text,
+      }));
+  }
+
+  async borrarMensajesSinContenido(
+    conversacionId: string,
+    wamids: string[],
+    texto: string
+  ) {
+    const antes = this.mensajes.length;
+    this.mensajes = this.mensajes.filter(
+      (m) =>
+        !(
+          m.conversation_id === conversacionId &&
+          wamids.includes(m.message_id) &&
+          m.content_text === texto
+        )
+    );
+    return antes - this.mensajes.length;
+  }
+
+  async recalcularChat(
+    conversacionId: string,
+    historiaAntesDe: string
+  ): Promise<ChatRecalculado> {
+    const c = this.conversacion(conversacionId);
+    const t = (x: string) => Date.parse(x);
+    const propios = this.mensajes
+      .filter((m) => m.conversation_id === conversacionId)
+      .sort((a, b) => t(a.created_at) - t(b.created_at));
+    const deHistoria =
+      !!c.created_at && t(c.created_at) < t(historiaAntesDe);
+    if (propios.length === 0) {
+      if (
+        deHistoria &&
+        c.status === 'closed' &&
+        !c.assigned_agent_id &&
+        !c.ai_handoff_summary &&
+        !this.chatsConAlgoColgado.has(conversacionId)
+      ) {
+        this.conversaciones = this.conversaciones.filter(
+          (x) => x.id !== conversacionId
+        );
+        return 'borrado';
+      }
+      c.last_message_text = null;
+      c.last_message_at = c.created_at ?? null;
+      c.first_inbound_at = null;
+      c.last_inbound_at = null;
+      c.last_reply_at = null;
+      return 'vacio';
+    }
+    const primero = propios[0];
+    const ultimo = propios[propios.length - 1];
+    const entrantes = propios.filter((m) => m.sender_type === 'customer');
+    const respuestas = propios.filter(
+      (m) => m.sender_type === 'agent' && m.status !== 'failed'
+    );
+    c.last_message_text = resumen(ultimo.content_text, ultimo.content_type);
+    c.last_message_at = ultimo.created_at;
+    c.first_inbound_at = entrantes[0]?.created_at ?? null;
+    c.last_inbound_at = entrantes[entrantes.length - 1]?.created_at ?? null;
+    c.last_reply_at = respuestas[respuestas.length - 1]?.created_at ?? null;
+    if (deHistoria) {
+      c.created_at = primero.created_at;
+      if (
+        c.status === 'closed' &&
+        c.closed_at &&
+        t(c.closed_at) < t(historiaAntesDe)
+      )
+        c.closed_at = ultimo.created_at;
+    }
+    return 'recalculado';
   }
 
   async buscarMensajePorWamid(conversacionId: string, wamid: string) {

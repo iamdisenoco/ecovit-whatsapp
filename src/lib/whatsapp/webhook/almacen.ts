@@ -80,6 +80,17 @@ export interface ResumenHistoria {
   primerEntranteEn: string | null;
 }
 
+/** Lo que el importador necesita saber de un mensaje ya guardado. */
+export interface MensajeGuardado {
+  id: string;
+  message_id: string;
+  media_url: string | null;
+  content_text: string | null;
+}
+
+/** Cómo quedó un chat al recalcularlo (`recalcularChat`). */
+export type ChatRecalculado = 'recalculado' | 'vacio' | 'borrado';
+
 export interface EstadoEntrante {
   wamid: string;
   status: 'sent' | 'delivered' | 'read' | 'failed';
@@ -146,6 +157,41 @@ export interface AlmacenWhatsApp {
    * filas entraron de verdad; las repetidas no cuentan.
    */
   insertarMensajesSiNuevos(filas: MensajeNuevo[]): Promise<number>;
+
+  /**
+   * Los mensajes de esos wamids que ya están en el chat (para la historia:
+   * cuáles tienen el adjunto bajado). Listas cortas: solo los de una página.
+   */
+  mensajesPorWamid(
+    conversacionId: string,
+    wamids: string[]
+  ): Promise<MensajeGuardado[]>;
+
+  /**
+   * Borra del chat los mensajes con ESOS wamids y ESE texto exacto (los vacíos
+   * de la sincronización que entraron antes de saber saltarlos). Nada más.
+   * Devuelve cuántos borró.
+   */
+  borrarMensajesSinContenido(
+    conversacionId: string,
+    wamids: string[],
+    texto: string
+  ): Promise<number>;
+
+  /**
+   * Rehace el resumen del chat con los mensajes que le quedan: la vista
+   * previa, `last_message_at`, `first_inbound_at`, `last_inbound_at` y
+   * `last_reply_at` (los disparadores solo suben esas fechas; esto las
+   * escribe directo, sin pasar por ellos). Si el chat lo creó la historia
+   * (`created_at` anterior a `historiaAntesDe`), también `created_at` y, si
+   * sigue cerrado desde entonces, `closed_at`, a su primer y último mensaje.
+   * Sin mensajes: se borra solo si lo creó la historia, está cerrado, sin
+   * dueño y sin nada colgado; si no, queda con la vista previa vacía.
+   */
+  recalcularChat(
+    conversacionId: string,
+    historiaAntesDe: string
+  ): Promise<ChatRecalculado>;
 
   /** Id interno de un mensaje por su wamid, dentro de la conversación. */
   buscarMensajePorWamid(

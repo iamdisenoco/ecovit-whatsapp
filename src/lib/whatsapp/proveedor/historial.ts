@@ -34,14 +34,36 @@ import type {
   ContentType,
   MensajeNuevo,
 } from '../webhook/almacen';
+import { guardarArchivoAdjunto } from '../webhook/adjuntos';
 import { nombreUtil } from '../webhook/contactos-supabase';
-import { chatDeMensaje, resumen } from '../webhook/procesar';
-import { obj, str, telefonoCrudo, type Obj } from './zernio-webhook';
-import { ZERNIO_URL_BASE } from './zernio';
+import {
+  ADJUNTO_SIN_DESCARGAR,
+  chatDeMensaje,
+  resumen,
+} from '../webhook/procesar';
+import { TEXTO_NO_SOPORTADO } from '../textos-mensaje';
+import {
+  leerTextoMensaje,
+  obj,
+  str,
+  telefonoCrudo,
+  type Obj,
+} from './zernio-webhook';
+import {
+  ADJUNTO_MAX_BYTES,
+  ZERNIO_URL_BASE,
+  bajarMediaZernio,
+  type ResultadoBajada,
+} from './zernio';
 import type { IdentidadRemitente } from './tipos';
 
-/** Lo que se pone en el chat cuando el mensaje era solo un adjunto. */
+/**
+ * Lo que se pone en el chat mientras el adjunto no se bajó: sin URL y con este
+ * texto (o con su pie de foto), queda pendiente y otra corrida lo completa.
+ */
 export const TEXTO_ADJUNTO = '[adjunto]';
+/** El tope de un archivo: el mismo del webhook (el del bucket). */
+export { ADJUNTO_MAX_BYTES };
 export const CONVERSACIONES_POR_PAGINA = 20;
 export const MENSAJES_POR_PAGINA = 100;
 /** Vercel corta a los 60 s: se deja margen para guardar y responder. */
@@ -66,10 +88,23 @@ export interface MensajeRemoto {
   creadoEn: string;
   saliente: boolean;
   texto: string | null;
-  adjuntos: Array<{ tipo: string | null; mime: string | null }>;
+  adjuntos: Array<{
+    tipo: string | null;
+    mime: string | null;
+    /** Dónde se baja (relativa a la API). Sin ella no se puede bajar. */
+    url?: string | null;
+  }>;
   estadoEntrega: string | null;
   borrado: boolean;
+  /**
+   * 131051 de `coexistence_history`: un mensaje vacío con la fecha de la
+   * sincronización. No se guarda, y si una corrida vieja lo guardó, se borra.
+   */
+  sinContenido?: boolean;
 }
+
+/** Cómo terminó la bajada de un adjunto de la historia (sin el 429, que lanza). */
+export type BajadaAdjunto = Exclude<ResultadoBajada, { estado: 'limite' }>;
 
 /** Un contacto de la agenda del número. `telefono` en dígitos, sin «+». */
 export interface ContactoRemoto {
@@ -102,6 +137,11 @@ export interface FuenteHistorial {
     cursor: string | null,
     limite: number
   ): Promise<Pagina<MensajeRemoto>>;
+  /**
+   * Baja un adjunto (solo GET). Un 429 lanza `LimiteDeVelocidad`, como los
+   * demás pedidos. Opcional: sin él, los adjuntos quedan pendientes.
+   */
+  adjunto?(url: string, mime: string | null): Promise<BajadaAdjunto>;
   /** La agenda del número (los contactos de WhatsApp de esa cuenta). */
   contactos(
     cuentaId: string,
@@ -164,18 +204,20 @@ function leerMensaje(crudo: unknown): MensajeRemoto | null {
   const adjuntos = Array.isArray(m.attachments)
     ? m.attachments.map((a) => {
         const x = obj(a);
-        return { tipo: str(x.type), mime: str(x.mimeType) };
+        return { tipo: str(x.type), mime: str(x.mimeType), url: str(x.url) };
       })
     : [];
+  const leido = leerTextoMensaje(str(m.message) ?? str(m.text), obj(m.metadata));
   return {
     id,
     creadoEn,
     // «incoming» / «outgoing» (medido). Cualquier otra cosa se toma como del cliente.
     saliente: str(m.direction) === 'outgoing',
-    texto: str(m.message) ?? str(m.text),
+    texto: leido.texto,
     adjuntos,
     estadoEntrega: str(m.deliveryStatus),
     borrado: m.isDeleted === true,
+    sinContenido: leido.sinContenido && adjuntos.length === 0,
   };
 }
 
@@ -357,6 +399,23 @@ export class FuenteHistorialZernio implements FuenteHistorial, LectorContactos {
     };
   }
 
+  /** La misma bajada del webhook (`bajarMediaZernio`); el 429 lanza. */
+  async adjunto(url: string, mime: string | null): Promise<BajadaAdjunto> {
+    const r = await bajarMediaZernio(
+      {
+        apiKey: this.config.apiKey,
+        baseUrl: this.base,
+        fetch: this.f,
+        timeoutMs: this.timeoutMs,
+      },
+      url,
+      mime
+    );
+    if (r.estado === 'limite')
+      throw new LimiteDeVelocidad(esperaDe(r.encabezados));
+    return r;
+  }
+
   async contacto(
     id: string,
     cuentaId: string | null
@@ -388,7 +447,8 @@ export function esperaDe(h: Headers, ahora = Date.now()): number {
  * Dónde va la importación. Opaco para el navegador (base64url de JSON):
  * - `pagina`: el cursor de Zernio de la página de chats en curso (null = la primera);
  * - `hechas`: los chats de ESA página que ya se terminaron;
- * - `enCurso`: el chat a medias, el cursor de sus mensajes y si lo creó la historia;
+ * - `enCurso`: el chat a medias, el cursor de la página de mensajes por donde
+ *   sigue (null = la primera) y si lo creó la historia;
  * - `listas`: cuántos chats van en total (para el avance);
  * - `fase`: `chats` y después `contactos` (la agenda, para los nombres);
  * - `saltoContactos`: el `skip` de la próxima página de la agenda.
@@ -396,7 +456,7 @@ export function esperaDe(h: Headers, ahora = Date.now()): number {
 export interface EstadoImportacion {
   pagina: string | null;
   hechas: string[];
-  enCurso: { id: string; cursor: string; creada?: boolean } | null;
+  enCurso: { id: string; cursor: string | null; creada?: boolean } | null;
   listas: number;
   fase: 'chats' | 'contactos';
   saltoContactos: number;
@@ -429,14 +489,13 @@ export function leerCursor(
       hechas: Array.isArray(e.hechas)
         ? e.hechas.filter((x): x is string => typeof x === 'string')
         : [],
-      enCurso:
-        str(enCurso.id) && str(enCurso.cursor)
-          ? {
-              id: str(enCurso.id)!,
-              cursor: str(enCurso.cursor)!,
-              creada: enCurso.creada === true,
-            }
-          : null,
+      enCurso: str(enCurso.id)
+        ? {
+            id: str(enCurso.id)!,
+            cursor: str(enCurso.cursor),
+            creada: enCurso.creada === true,
+          }
+        : null,
       listas: typeof e.listas === 'number' && e.listas >= 0 ? e.listas : 0,
       // Un cursor de antes de la fase de contactos sigue en los chats.
       fase: e.fase === 'contactos' ? 'contactos' : 'chats',
@@ -488,6 +547,16 @@ export interface ResultadoTramo {
   terminado: boolean;
   /** Si el proveedor pidió esperar: cuánto antes de la siguiente llamada. */
   esperarMs: number | null;
+  /** Adjuntos bajados y guardados en este tramo. */
+  adjuntosBajados: number;
+  /** Adjuntos que ya no existen (400/404) o pasan el tope: quedan «sin descargar». */
+  adjuntosVencidos: number;
+  /** Adjuntos que fallaron por otra cosa: quedan pendientes para otra corrida. */
+  adjuntosFallidos: number;
+  /** Mensajes vacíos de la sincronización (131051) borrados de una corrida vieja. */
+  vaciosBorrados: number;
+  /** Chats a los que se les rehízo el resumen con los mensajes que quedan. */
+  chatsRecalculados: number;
 }
 
 /** Del tipo de adjunto de Zernio al `content_type` de la fila. */
@@ -574,6 +643,11 @@ export async function importarHistorial(
     cursor: null,
     terminado: false,
     esperarMs: null,
+    adjuntosBajados: 0,
+    adjuntosVencidos: 0,
+    adjuntosFallidos: 0,
+    vaciosBorrados: 0,
+    chatsRecalculados: 0,
   };
 
   /** Pide al proveedor; ante un 429 espera si cabe en el tramo, si no corta. */
@@ -675,26 +749,30 @@ export async function importarHistorial(
     let creada = retomado?.creada === true;
 
     let cursor = retomado?.cursor ?? null;
-    const guardarAvance = () => {
-      if (cursor) estado.enCurso = { id: conv.id, cursor, creada };
+    /** Corta y deja el chat para seguir desde la página `desde` (null = la primera). */
+    const pausar = (desde: string | null): 'cortar' => {
+      estado.enCurso = { id: conv.id, cursor: desde, creada };
+      return 'cortar';
     };
     for (;;) {
-      if (queda() <= 0) {
-        guardarAvance();
-        return 'cortar';
-      }
+      if (queda() <= 0) return pausar(cursor);
       const pagina = await pedir(() =>
         o.fuente.mensajes(o.cuentaId, conv.id, cursor, msjPorPagina)
       );
-      if (pagina === 'cortar') {
-        guardarAvance();
-        return 'cortar';
-      }
+      if (pagina === 'cortar') return pausar(cursor);
 
+      // Los vacíos de la sincronización: no se guardan, y si una corrida
+      // vieja los guardó, se borran (abajo).
+      const vacios: string[] = [];
       const importables = pagina.items.filter((m) => {
         const cuando = Date.parse(m.creadoEn);
         // Borrado o con fecha ilegible: se salta y se cuenta.
         if (m.borrado || !Number.isFinite(cuando)) {
+          r.saltados++;
+          return false;
+        }
+        if (m.sinContenido) {
+          vacios.push(m.id);
           r.saltados++;
           return false;
         }
@@ -741,9 +819,17 @@ export async function importarHistorial(
       if (conversacionId && creada && !recienCreada && importables.length > 0)
         await o.almacen.ajustarFechasHistoria(conversacionId, desde, hasta);
 
+      let recalcular = false;
       if (conversacionId && importables.length > 0) {
         const filas = importables.map((m) => filaDe(m, conversacionId!));
         r.mensajes += await o.almacen.insertarMensajesSiNuevos(filas);
+
+        // Los adjuntos: se bajan los que siguen pendientes. Si el tramo se
+        // acaba a mitad, se vuelve a pedir ESTA página (todo es idempotente).
+        const adj = await bajarAdjuntos(conversacionId, importables);
+        if (adj === 'cortar') return pausar(cursor);
+        recalcular ||= adj;
+
         let ultimo = filas[0];
         let primerEntrante: string | null = null;
         for (const f of filas) {
@@ -763,8 +849,101 @@ export async function importarHistorial(
         });
       }
 
+      if (vacios.length > 0) {
+        // El chat se busca sin crearlo: si no existe, no hay nada que limpiar.
+        conversacionId ??=
+          (
+            await o.almacen.buscarConversacionPorReferencia(inq, {
+              conversacionId: conv.id,
+              cuentaId: conv.cuentaId ?? o.cuentaId,
+            })
+          )?.id ?? null;
+        if (conversacionId) {
+          r.vaciosBorrados += await o.almacen.borrarMensajesSinContenido(
+            conversacionId,
+            vacios,
+            TEXTO_NO_SOPORTADO
+          );
+          // Siempre que el chat tenga vacíos del proveedor, aunque ya no
+          // quede ninguno guardado: si una corrida se cortó entre borrar y
+          // recalcular, esta lo termina.
+          recalcular = true;
+        }
+      }
+
+      if (conversacionId && recalcular) {
+        const quedo = await o.almacen.recalcularChat(
+          conversacionId,
+          new Date(conexion).toISOString()
+        );
+        r.chatsRecalculados++;
+        if (quedo === 'borrado') conversacionId = null;
+      }
+
       if (!pagina.siguiente) return 'listo';
       cursor = pagina.siguiente;
     }
+  }
+
+  /**
+   * Baja los adjuntos pendientes de una página, ya insertada. Un mensaje está
+   * pendiente si no tiene `media_url` ni el aviso de «sin descargar»: así se
+   * completan también los «[adjunto]» de una corrida vieja, y no se vuelve a
+   * pedir lo que ya se bajó ni lo que ya se sabe vencido. Devuelve si cambió
+   * algún mensaje (hay que rehacer la vista previa) o `'cortar'`.
+   */
+  async function bajarAdjuntos(
+    conversacionId: string,
+    mensajes: MensajeRemoto[]
+  ): Promise<boolean | 'cortar'> {
+    const bajar = o.fuente.adjunto?.bind(o.fuente);
+    if (!bajar) return false;
+    const conAdjunto = mensajes.filter((m) => m.adjuntos[0]?.url);
+    if (conAdjunto.length === 0) return false;
+    const guardados = new Map(
+      (
+        await o.almacen.mensajesPorWamid(
+          conversacionId,
+          conAdjunto.map((m) => m.id)
+        )
+      ).map((g) => [g.message_id, g])
+    );
+    let cambio = false;
+    for (const m of conAdjunto) {
+      const g = guardados.get(m.id);
+      if (!g || g.media_url) continue;
+      if ((g.content_text ?? '').includes(ADJUNTO_SIN_DESCARGAR)) continue;
+      if (queda() <= 0) return 'cortar';
+      const adjunto = m.adjuntos[0];
+      const bajada = await pedir(() => bajar(adjunto.url!, adjunto.mime));
+      if (bajada === 'cortar') return 'cortar';
+      if (bajada.estado === 'bajado') {
+        const url = await guardarArchivoAdjunto(
+          o.almacen,
+          { accountId: inq.accountId, wamid: m.id, indice: 0 },
+          bajada.archivo,
+          adjunto.mime
+        );
+        if (!url) {
+          r.adjuntosFallidos++;
+          continue;
+        }
+        await o.almacen.actualizarAdjunto(g.id, url, m.texto ?? null);
+        r.adjuntosBajados++;
+        cambio = true;
+      } else if (bajada.estado === 'vencido' || bajada.estado === 'grande') {
+        // Para siempre: no se vuelve a pedir. El pie de foto se conserva.
+        await o.almacen.actualizarAdjunto(
+          g.id,
+          null,
+          m.texto ? `${m.texto}\n${ADJUNTO_SIN_DESCARGAR}` : ADJUNTO_SIN_DESCARGAR
+        );
+        r.adjuntosVencidos++;
+        cambio = true;
+      } else {
+        r.adjuntosFallidos++;
+      }
+    }
+    return cambio;
   }
 }
